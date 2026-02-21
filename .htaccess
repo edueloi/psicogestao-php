@@ -1,0 +1,21 @@
+﻿DirectoryIndex index.php
+
+RewriteEngine On
+
+# Redireciona URL com .php para URL limpa
+RewriteCond %{THE_REQUEST} \s/+(.+?)\.php[\s?] [NC]
+RewriteRule ^ %1 [R=301,L]
+
+# /api -> api.php (sem expor extensao)
+RewriteRule ^api/?$ api.php [L,QSA,NC]
+
+# Permite acessar /arquivo em vez de /arquivo.php
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteCond %{REQUEST_FILENAME}.php -f
+RewriteRule ^([A-Za-z0-9_-]+)/?$ $1.php [L,QSA]
+
+# Protege o banco SQLite
+<Files "database.sqlite">
+  Require all denied
+</Files>

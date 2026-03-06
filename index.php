@@ -401,10 +401,12 @@ $totals_filtered = calcTotals($filtered_tx);
 function fmtBRL($val) { return 'R$ ' . number_format($val, 2, ',', '.'); }
 function fmtDateBR($iso) { return date('d/m/Y', strtotime($iso)); }
 
+$mon_names = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+
 function getMonthName($m) {
+    global $mon_names;
     $parts = explode('-', $m);
-    $months = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
-    return $months[(int)$parts[1]-1] . ' ' . $parts[0];
+    return $mon_names[(int)$parts[1]-1] . ' ' . $parts[0];
 }
 
 $view_mode = $_GET['month'] ?? 'archive'; // 'archive' ou YYYY-MM
@@ -420,10 +422,12 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PsicoGestão - Dra. Karen Gomes</title>
-    <!-- Tailwind CSS para Estética Premium -->
+    <title>PsicoGestão - Karen Gomes Psicóloga</title>
+    <link rel="icon" type="image/png" href="favicon_psicogestao_logo_1772840774779.png">
+    <!-- Tailwind CSS & Icon Library -->
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #f8fafc; }
         .glass { background: rgba(255, 255, 255, 0.7); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.3); }
@@ -443,7 +447,7 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                 <div class="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white text-xl shadow-lg ring-4 ring-indigo-50">Ψ</div>
                 <div>
                     <h1 class="font-extrabold text-lg leading-none tracking-tight">Psico<span class="text-indigo-600">Gestão</span></h1>
-                    <p class="text-[9px] text-slate-400 font-bold uppercase tracking-widest mt-1">Dra. Karen Gomes</p>
+                    <p class="text-[9px] text-slate-400 font-bold uppercase tracking-widest mt-1">Karen Gomes • CRP 06/172315</p>
                 </div>
             </div>
 
@@ -451,19 +455,19 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                 <p class="px-4 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4">Módulos</p>
                 
                 <a href="?tab=dashboard" class="flex items-center gap-3.5 px-5 py-3 rounded-2xl transition-all group relative overflow-hidden <?= $active_tab=='dashboard' ? 'sidebar-item-active text-white' : 'text-slate-500 hover:bg-slate-50 hover:text-indigo-600' ?>">
-                    <span class="text-lg relative z-10">📊</span>
+                    <span class="w-5 text-center relative z-10"><i class="fa-solid fa-chart-line"></i></span>
                     <span class="text-[13px] font-bold relative z-10">Dashboard</span>
                     <?php if($active_tab=='dashboard'): ?> <div class="absolute inset-0 bg-gradient-to-r from-indigo-600 to-indigo-700 opacity-100"></div> <?php endif; ?>
                 </a>
 
                 <a href="?tab=cashbook" class="flex items-center gap-3.5 px-5 py-3 rounded-2xl transition-all group relative overflow-hidden <?= $active_tab=='cashbook' ? 'sidebar-item-active text-white' : 'text-slate-500 hover:bg-slate-50 hover:text-indigo-600' ?>">
-                    <span class="text-lg relative z-10">📒</span>
+                    <span class="w-5 text-center relative z-10"><i class="fa-solid fa-book-medical"></i></span>
                     <span class="text-[13px] font-bold relative z-10">Livro Caixa</span>
                     <?php if($active_tab=='cashbook'): ?> <div class="absolute inset-0 bg-gradient-to-r from-indigo-600 to-indigo-700 opacity-100"></div> <?php endif; ?>
                 </a>
 
                 <a href="?tab=reports" class="flex items-center gap-3.5 px-5 py-3 rounded-2xl transition-all group relative overflow-hidden <?= $active_tab=='reports' ? 'sidebar-item-active text-white' : 'text-slate-500 hover:bg-slate-50 hover:text-indigo-600' ?>">
-                    <span class="text-lg relative z-10">🧠</span>
+                    <span class="w-5 text-center relative z-10"><i class="fa-solid fa-wand-magic-sparkles"></i></span>
                     <span class="text-[13px] font-bold relative z-10">AI Insights</span>
                     <?php if($active_tab=='reports'): ?> <div class="absolute inset-0 bg-gradient-to-r from-indigo-600 to-indigo-700 opacity-100"></div> <?php endif; ?>
                 </a>
@@ -471,20 +475,49 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                 <div class="pt-6 mt-4 border-t border-slate-50">
                     <p class="px-4 text-[9px] font-black text-slate-300 uppercase tracking-[0.2em] mb-3">Administração</p>
                     <a href="?tab=provisions" class="flex items-center gap-3.5 px-5 py-3 rounded-2xl transition-all group relative overflow-hidden <?= $active_tab=='provisions' ? 'sidebar-item-active text-white' : 'text-slate-500 hover:bg-slate-50' ?>">
-                        <span class="text-lg relative z-10">⚖️</span>
+                        <span class="w-5 text-center relative z-10"><i class="fa-solid fa-file-invoice-dollar"></i></span>
                         <span class="text-[13px] font-bold relative z-10">Fiscal & Tributário</span>
                         <?php if($active_tab=='provisions'): ?> <div class="absolute inset-0 bg-gradient-to-r from-slate-800 to-slate-900 opacity-100"></div> <?php endif; ?>
+                    </a>
+                </div>
+
+                <div class="pt-6 mt-4 border-t border-slate-50">
+                    <p class="px-4 text-[9px] font-black text-slate-300 uppercase tracking-[0.2em] mb-3">Links Externos</p>
+                    <a href="https://karengomes.com.br/" target="_blank" class="flex items-center gap-3.5 px-5 py-3 rounded-2xl transition-all text-slate-500 hover:bg-slate-50 hover:text-indigo-600">
+                        <span class="w-5 text-center"><i class="fa-solid fa-globe"></i></span>
+                        <span class="text-[13px] font-bold">Site Profissional</span>
+                    </a>
+                    <a href="https://melodias.karengomes.com.br/" target="_blank" class="flex items-center gap-3.5 px-5 py-3 rounded-2xl transition-all text-slate-500 hover:bg-slate-50 hover:text-indigo-600">
+                        <span class="w-5 text-center"><i class="fa-solid fa-music"></i></span>
+                        <span class="text-[13px] font-bold">Rede Melodias</span>
+                    </a>
+                    <a href="https://www.instagram.com/psi.karengomes" target="_blank" class="flex items-center gap-3.5 px-5 py-3 rounded-2xl transition-all text-slate-500 hover:bg-slate-50 hover:text-pink-600">
+                        <span class="w-5 text-center"><i class="fa-brands fa-instagram"></i></span>
+                        <span class="text-[13px] font-bold">Instagram</span>
                     </a>
                 </div>
             </nav>
 
             <div class="p-6 border-t border-slate-100">
+                <?php 
+                $sidebar_status_label = 'Status Geral';
+                if ($active_tab === 'dashboard' && $dash_month !== 'all') {
+                    $sidebar_status_label = 'Status de ' . $mon_names[(int)$dash_month-1];
+                } elseif ($active_tab === 'cashbook' && preg_match('/^\d{4}-\d{2}$/', $filter_month)) {
+                    $sidebar_status_label = 'Status de ' . getMonthName($filter_month);
+                } elseif ($active_tab === 'cashbook' && $filter_month === 'current') {
+                    $sidebar_status_label = 'Status do Mês';
+                }
+                
+                $liquid_val = $totals_dashboard['liquid'];
+                $progress_pct = min(100, max(0, ($liquid_val / 10000) * 100)); // Usando 10k como meta base exemplo
+                ?>
                 <div class="bg-indigo-600 rounded-3xl p-5 text-white shadow-xl relative overflow-hidden group">
                     <div class="relative z-10">
-                        <p class="text-[9px] font-black text-indigo-200 uppercase tracking-widest mb-1">Status do Mês</p>
-                        <p class="text-sm font-bold"><?= fmtBRL($totals_all['liquid']) ?> Líquido</p>
+                        <p class="text-[9px] font-black text-indigo-200 uppercase tracking-widest mb-1"><?= $sidebar_status_label ?></p>
+                        <p class="text-sm font-bold"><?= fmtBRL($liquid_val) ?> Líquido</p>
                         <div class="w-full bg-white/20 h-1.5 rounded-full mt-3 overflow-hidden">
-                            <div class="bg-white h-full" style="width: 75%"></div>
+                            <div class="bg-white h-full transition-all duration-1000" style="width: <?= $progress_pct ?>%"></div>
                         </div>
                     </div>
                 </div>
@@ -506,8 +539,8 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                         <div class="relative group">
                             <button class="flex items-center gap-3 px-3 py-2 rounded-2xl hover:bg-slate-50 transition-all group">
                                 <div class="text-right hidden sm:block">
-                                    <p class="text-[11px] font-black text-slate-900 leading-none">Dra. Karen Lais</p>
-                                    <p class="text-[9px] text-emerald-500 font-bold uppercase mt-1 tracking-widest">Online</p>
+                                    <p class="text-[11px] font-black text-slate-900 leading-none">Karen Gomes</p>
+                                    <p class="text-[9px] text-emerald-500 font-bold uppercase mt-1 tracking-widest text-right">Psicóloga Online</p>
                                 </div>
                                 <img src="https://ui-avatars.com/api/?name=Karen+Gomes&background=4f46e5&color=fff" class="w-9 h-9 rounded-xl ring-2 ring-indigo-50 group-hover:ring-indigo-100 transition-all shadow-sm">
                             </button>
@@ -533,7 +566,7 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
 
                                 <div class="mt-2 pt-2 border-t border-slate-50">
                                     <a href="?logout=1" class="flex items-center gap-3 px-6 py-3 text-[11px] font-black text-rose-500 hover:bg-rose-50 transition-all uppercase tracking-widest">
-                                        <span class="text-sm">🚪</span> Sair do Sistema
+                                        <i class="fa-solid fa-right-from-bracket"></i> Sair do Sistema
                                     </a>
                                 </div>
                             </div>
@@ -560,8 +593,8 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                                 <select name="dash_month" class="bg-slate-50 border-none rounded-xl px-4 py-2 text-[10px] font-black uppercase tracking-widest outline-none cursor-pointer hover:bg-slate-100 transition-all">
                                     <option value="all" <?= $dash_month == 'all' ? 'selected' : '' ?>>Todos os Meses</option>
                                     <?php 
-                                    $mon_names = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
-                                    foreach($mon_names as $idx => $name): ?>
+                                    $mon_short = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+                                    foreach($mon_short as $idx => $name): ?>
                                         <option value="<?= $idx+1 ?>" <?= (int)$dash_month == $idx+1 ? 'selected' : '' ?>><?= $name ?></option>
                                     <?php endforeach; ?>
                                 </select>
@@ -570,7 +603,7 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                                         <option value="<?= $y ?>" <?= $dash_year == $y ? 'selected' : '' ?>><?= $y ?></option>
                                     <?php endforeach; ?>
                                 </select>
-                                <button type="submit" class="w-10 h-10 bg-indigo-600 text-white rounded-xl flex items-center justify-center shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition-all">🔍</button>
+                                <button type="submit" class="w-10 h-10 bg-indigo-600 text-white rounded-xl flex items-center justify-center shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition-all"><i class="fa-solid fa-magnifying-glass"></i></button>
                             </form>
                         </div>
 
@@ -580,15 +613,17 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                             $diff_pct = $totals_prev['liquid'] > 0 ? ($diff / $totals_prev['liquid']) * 100 : 0;
 
                             $cards = [
-                                ['Faturamento Bruto', $totals_dashboard['income'], 'Entradas', 'indigo', '🎯'],
-                                ['Despesas Operacionais', $totals_dashboard['expense'], 'Saídas', 'rose', '📉'],
-                                ['Provisões Fiscais', $totals_dashboard['total_prov'], 'Reservas', 'amber', '⚖️'],
-                                ['Lucro Líquido Real', $totals_dashboard['liquid'], 'Disponível', 'emerald', '💎', true]
+                                ['Faturamento Bruto', $totals_dashboard['income'], 'Entradas', 'indigo', 'fa-solid fa-bullseye'],
+                                ['Despesas Operacionais', $totals_dashboard['expense'], 'Saídas', 'rose', 'fa-solid fa-chart-line-down'],
+                                ['Provisões Fiscais', $totals_dashboard['total_prov'], 'Reservas', 'amber', 'fa-solid fa-scale-balanced'],
+                                ['Lucro Líquido Real', $totals_dashboard['liquid'], 'Disponível', 'emerald', 'fa-solid fa-gem', true]
                             ];
                             foreach($cards as $c): ?>
-                                <div class="<?= $c[5] ?? false ? 'bg-slate-900 text-white shadow-2xl scale-[1.05] z-10' : 'bg-white text-slate-900 border-slate-100' ?> p-8 rounded-[3rem] border shadow-sm relative overflow-hidden group hover:-translate-y-1 transition-all">
+                                <div class="p-8 rounded-[3rem] border shadow-sm relative overflow-hidden group hover:-translate-y-1 transition-all <?= $c[5] ?? false ? 'bg-slate-900 text-white shadow-2xl scale-[1.05] z-10' : 'bg-white text-slate-900 border-slate-100' ?>">
                                     <div class="flex justify-between items-start mb-6">
-                                        <div class="w-12 h-12 rounded-2xl <?= $c[5] ?? false ? 'bg-white/10' : 'bg-slate-50 text-slate-400' ?> flex items-center justify-center text-xl"><?= $c[4] ?></div>
+                                        <div class="w-12 h-12 rounded-2xl <?= $c[5] ?? false ? 'bg-white/10' : 'bg-slate-50 text-slate-400' ?> flex items-center justify-center text-xl">
+                                            <i class="<?= $c[4] ?>"></i>
+                                        </div>
                                         <p class="text-[10px] font-black uppercase tracking-widest opacity-40"><?= $c[2] ?></p>
                                     </div>
                                     <p class="text-[11px] font-black uppercase tracking-[0.2em] mb-2 opacity-60"><?= $c[0] ?></p>
@@ -611,19 +646,25 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                             <div class="lg:col-span-2 bg-white rounded-[3rem] border border-slate-100 p-10 shadow-sm relative overflow-hidden">
                                 <div class="relative z-10">
                                     <div class="flex justify-between items-center mb-10">
-                                        <h3 class="text-xl font-black text-slate-900 flex items-center gap-3"><span>📊</span> Gráfico de Performance</h3>
+                                        <h3 class="text-xl font-black text-slate-900 flex items-center gap-3">
+                                            <i class="fa-solid fa-chart-column text-indigo-500"></i> Performance
+                                        </h3>
                                         <span class="text-[10px] font-black text-indigo-500 bg-indigo-50 px-4 py-2 rounded-full uppercase tracking-widest">Realizado em <?= $dash_year ?></span>
                                     </div>
                                     <div class="h-80 flex flex-col items-center justify-center border-2 border-dashed border-slate-50 rounded-[2.5rem] text-slate-300 italic group hover:border-indigo-100 transition-all cursor-pointer">
-                                        <p class="text-3xl mb-4 group-hover:scale-125 transition-transform duration-500">📈</p>
-                                        <p class="font-black text-[12px] uppercase tracking-widest group-hover:text-indigo-600 transition-all">Visualização Avançada em breve</p>
-                                        <p class="text-[10px] mt-2 opacity-60">Prepare-se para insights profundos em tempo real</p>
+                                        <p class="text-3xl mb-4 group-hover:scale-125 transition-transform duration-500">
+                                            <i class="fa-solid fa-arrow-trend-up"></i>
+                                        </p>
+                                        <p class="font-black text-[12px] uppercase tracking-widest group-hover:text-indigo-600 transition-all">Análise Gráfica em Breve</p>
+                                        <p class="text-[10px] mt-2 opacity-60">Insights profundos e projeções em tempo real</p>
                                     </div>
                                 </div>
                             </div>
 
                             <div class="bg-white rounded-[3rem] border border-slate-100 p-10 shadow-sm relative overflow-hidden">
-                                <h3 class="text-xl font-black text-slate-900 mb-8 flex items-center gap-3"><span>⚖️</span> Impostos & Prov</h3>
+                                <h3 class="text-xl font-black text-slate-900 mb-8 flex items-center gap-3">
+                                    <i class="fa-solid fa-scale-balanced text-amber-500"></i> Fiscal & Prov
+                                </h3>
                                 <div class="space-y-4">
                                     <?php foreach($totals_dashboard['provisions'] as $p): ?>
                                         <div class="p-6 bg-slate-50 border border-slate-100 rounded-[2rem] flex justify-between items-center group hover:bg-white hover:shadow-xl hover:border-indigo-50 transition-all">
@@ -744,21 +785,21 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                             <!-- KPIs Topo -->
                             <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                                 <div class="bg-white p-6 rounded-[2.5rem] border border-slate-200 shadow-sm flex items-center gap-5 group hover:shadow-lg transition-all">
-                                    <div class="w-12 h-12 bg-emerald-50 text-emerald-500 rounded-2xl flex items-center justify-center text-xl shadow-inner group-hover:scale-110 transition-transform">📈</div>
+                                    <div class="w-12 h-12 bg-emerald-50 text-emerald-500 rounded-2xl flex items-center justify-center text-xl shadow-inner group-hover:scale-110 transition-transform"><i class="fa-solid fa-arrow-trend-up"></i></div>
                                     <div>
                                         <p class="text-[10px] font-black text-slate-400 uppercase tracking-[0.1em] mb-1">Entradas Totais</p>
                                         <p class="text-xl font-black text-slate-900"><?= fmtBRL($totals_filtered['income']) ?></p>
                                     </div>
                                 </div>
                                 <div class="bg-white p-6 rounded-[2.5rem] border border-slate-200 shadow-sm flex items-center gap-5 group hover:shadow-lg transition-all">
-                                    <div class="w-12 h-12 bg-rose-50 text-rose-500 rounded-2xl flex items-center justify-center text-xl shadow-inner group-hover:scale-110 transition-transform">📉</div>
+                                    <div class="w-12 h-12 bg-rose-50 text-rose-500 rounded-2xl flex items-center justify-center text-xl shadow-inner group-hover:scale-110 transition-transform"><i class="fa-solid fa-arrow-trend-down"></i></div>
                                     <div>
                                         <p class="text-[10px] font-black text-slate-400 uppercase tracking-[0.1em] mb-1">Saídas Totais</p>
                                         <p class="text-xl font-black text-slate-900"><?= fmtBRL($totals_filtered['expense']) ?></p>
                                     </div>
                                 </div>
                                 <div class="bg-slate-900 p-6 rounded-[2.5rem] shadow-xl shadow-slate-200 flex items-center gap-5 group border border-slate-800">
-                                    <div class="w-12 h-12 bg-white/10 text-white rounded-2xl flex items-center justify-center text-xl shadow-inner group-hover:scale-110 transition-transform">💰</div>
+                                    <div class="w-12 h-12 bg-white/10 text-white rounded-2xl flex items-center justify-center text-xl shadow-inner group-hover:scale-110 transition-transform"><i class="fa-solid fa-wallet"></i></div>
                                     <div>
                                         <p class="text-[10px] font-black text-white/40 uppercase tracking-[0.1em] mb-1">Saldo Líquido</p>
                                         <p class="text-xl font-black text-white"><?= fmtBRL($totals_filtered['net']) ?></p>
@@ -773,10 +814,10 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                                 </div>
                                 <div class="flex items-center gap-2">
                                     <button onclick="openModal('importModal')" class="h-11 px-5 bg-indigo-50 text-indigo-600 rounded-2xl border border-indigo-100 hover:bg-indigo-100 transition-all text-[11px] font-black uppercase tracking-widest flex items-center gap-2">
-                                        <span>📥</span> Importar Dados
+                                        <i class="fa-solid fa-file-import"></i> Importar Dados
                                     </button>
                                     <button onclick="openModal('txModal')" class="h-11 px-6 bg-slate-900 text-white rounded-2xl text-[11px] font-black uppercase tracking-widest shadow-lg hover:bg-slate-800 transition-all flex items-center gap-2">
-                                        <span>+</span> Novo Lançamento
+                                        <i class="fa-solid fa-plus"></i> Novo Lançamento
                                     </button>
                                 </div>
                             </div>
@@ -786,7 +827,7 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                                 <input type="hidden" name="tab" value="cashbook">
                                 <input type="hidden" name="month" value="<?= htmlspecialchars($_GET['month']) ?>">
                                 <div class="flex-1 relative w-full">
-                                    <span class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
+                                    <span class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"><i class="fa-solid fa-magnifying-glass"></i></span>
                                     <input type="text" name="search" value="<?= htmlspecialchars($filter_search) ?>" placeholder="Buscar nos lançamentos..." class="w-full pl-11 pr-4 py-3 bg-white border border-slate-200 rounded-2xl text-xs font-bold outline-none focus:ring-2 ring-indigo-50 transition-all">
                                 </div>
                                 <div class="flex gap-2 w-full md:w-auto">
@@ -862,20 +903,20 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                                                                 <input type="hidden" name="id" value="<?= $t['id'] ?>">
                                                                 <input type="hidden" name="new_status" value="<?= $t['status']=='PAID' ? 'PENDING' : 'PAID' ?>">
                                                                 <button type="submit" class="w-full text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-xl border <?= $t['status']=='PAID' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-amber-50 text-amber-600 border-amber-100' ?>">
-                                                                    <?= $t['status'] == 'PAID' ? '✅ Pago' : '⏳ Pendente' ?>
+                                                                    <i class="fa-solid <?= $t['status']=='PAID' ? 'fa-circle-check' : 'fa-clock' ?> mr-2"></i> <?= $t['status'] == 'PAID' ? 'Pago' : 'Pendente' ?>
                                                                 </button>
                                                             </form>
                                                         </div>
                                                     </td>
                                                     <td class="px-8 py-6 text-right whitespace-nowrap">
-                                                        <div class="flex justify-end gap-2 text-lg">
-                                                            <button onclick="editTx(<?= htmlspecialchars(json_encode($t)) ?>)" class="w-8 h-8 flex items-center justify-center bg-slate-50 rounded-xl hover:bg-indigo-600 hover:text-white text-slate-400 transition-all shadow-sm">✏️</button>
+                                                        <div class="flex justify-end gap-2 text-md">
+                                                            <button onclick="editTx(<?= htmlspecialchars(json_encode($t)) ?>)" class="w-8 h-8 flex items-center justify-center bg-slate-50 rounded-xl hover:bg-indigo-600 hover:text-white text-slate-400 transition-all shadow-sm"><i class="fa-solid fa-pen-to-square"></i></button>
                                                             <form method="POST" class="inline">
                                                                 <input type="hidden" name="action" value="repeat">
                                                                 <input type="hidden" name="id" value="<?= $t['id'] ?>">
-                                                                <button type="submit" class="w-8 h-8 flex items-center justify-center bg-slate-50 rounded-xl hover:bg-emerald-500 hover:text-white text-slate-400 transition-all shadow-sm">🔁</button>
+                                                                <button type="submit" class="w-8 h-8 flex items-center justify-center bg-slate-50 rounded-xl hover:bg-emerald-500 hover:text-white text-slate-400 transition-all shadow-sm"><i class="fa-solid fa-rotate-right"></i></button>
                                                             </form>
-                                                            <button onclick="triggerConfirm('Excluir?', 'Este registro será removido.', 'delete', '<?= $t['id'] ?>')" class="w-8 h-8 flex items-center justify-center bg-slate-50 rounded-xl hover:bg-rose-500 hover:text-white text-slate-400 transition-all shadow-sm">🗑️</button>
+                                                            <button onclick="triggerConfirm('Excluir?', 'Este registro será removido.', 'delete', '<?= $t['id'] ?>')" class="w-8 h-8 flex items-center justify-center bg-slate-50 rounded-xl hover:bg-rose-500 hover:text-white text-slate-400 transition-all shadow-sm"><i class="fa-solid fa-trash-can"></i></button>
                                                         </div>
                                                     </td>
                                                 </tr>
@@ -898,7 +939,7 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                                         
                                         <div>
                                             <div class="flex justify-between items-start mb-6">
-                                                <div class="w-12 h-12 <?= $is_income ? 'bg-emerald-50 text-emerald-600 shadow-emerald-100' : 'bg-rose-50 text-rose-600 shadow-rose-100' ?> rounded-2xl flex items-center justify-center text-xl shadow-inner"><?= $is_income ? '📈' : '📉' ?></div>
+                                                <div class="w-12 h-12 <?= $is_income ? 'bg-emerald-50 text-emerald-600 shadow-emerald-100' : 'bg-rose-50 text-rose-600 shadow-rose-100' ?> rounded-2xl flex items-center justify-center text-xl shadow-inner"><i class="fa-solid <?= $is_income ? 'fa-arrow-trend-up' : 'fa-arrow-trend-down' ?>"></i></div>
                                                 <div class="text-right">
                                                     <p class="text-[10px] font-black <?= $is_income ? 'text-emerald-500' : 'text-rose-500' ?> uppercase tracking-widest mb-1"><?= $is_income ? 'Entrada' : 'Saída' ?></p>
                                                     <h4 class="text-xl font-black text-slate-900"><?= fmtBRL($t['amount']) ?></h4>
@@ -943,18 +984,18 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                                                     <input type="hidden" name="id" value="<?= $t['id'] ?>">
                                                     <input type="hidden" name="new_status" value="<?= $t['status']=='PAID' ? 'PENDING' : 'PAID' ?>">
                                                     <button type="submit" class="px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest border transition-all <?= $t['status']=='PAID' ? 'bg-emerald-500 text-white border-emerald-600' : 'bg-white text-amber-600 border-amber-200' ?>">
-                                                        <?= $t['status'] == 'PAID' ? '✓ Pago' : '⏳ Pendente' ?>
+                                                        <i class="fa-solid <?= $t['status'] == 'PAID' ? 'fa-check' : 'fa-clock' ?> mr-1"></i> <?= $t['status'] == 'PAID' ? 'Pago' : 'Pendente' ?>
                                                     </button>
                                                 </form>
 
                                                 <div class="flex gap-2">
-                                                    <button onclick="editTx(<?= htmlspecialchars(json_encode($t)) ?>)" class="w-8 h-8 flex items-center justify-center bg-white rounded-lg border border-slate-200 text-slate-400 hover:border-indigo-600 hover:text-indigo-600 transition-all text-xs shadow-sm">✏️</button>
+                                                    <button onclick="editTx(<?= htmlspecialchars(json_encode($t)) ?>)" class="w-8 h-8 flex items-center justify-center bg-white rounded-lg border border-slate-200 text-slate-400 hover:border-indigo-600 hover:text-indigo-600 transition-all text-xs shadow-sm"><i class="fa-solid fa-pen-to-square"></i></button>
                                                     <form method="POST" class="inline">
                                                         <input type="hidden" name="action" value="repeat">
                                                         <input type="hidden" name="id" value="<?= $t['id'] ?>">
-                                                        <button type="submit" class="w-8 h-8 flex items-center justify-center bg-white rounded-lg border border-slate-200 text-slate-400 hover:border-emerald-500 hover:text-emerald-500 transition-all text-xs shadow-sm">🔁</button>
+                                                        <button type="submit" class="w-8 h-8 flex items-center justify-center bg-white rounded-lg border border-slate-200 text-slate-400 hover:border-emerald-500 hover:text-emerald-500 transition-all text-xs shadow-sm"><i class="fa-solid fa-rotate-right"></i></button>
                                                     </form>
-                                                    <button onclick="triggerConfirm('Excluir?', 'Este registro será removido.', 'delete', '<?= $t['id'] ?>')" class="w-8 h-8 flex items-center justify-center bg-white rounded-lg border border-slate-200 text-slate-400 hover:border-rose-500 hover:text-rose-500 transition-all text-xs shadow-sm">🗑️</button>
+                                                    <button onclick="triggerConfirm('Excluir?', 'Este registro será removido.', 'delete', '<?= $t['id'] ?>')" class="w-8 h-8 flex items-center justify-center bg-white rounded-lg border border-slate-200 text-slate-400 hover:border-rose-500 hover:text-rose-500 transition-all text-xs shadow-sm"><i class="fa-solid fa-trash-can"></i></button>
                                                 </div>
                                             </div>
                                         </div>

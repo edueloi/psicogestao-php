@@ -1,7 +1,11 @@
 <?php
 require __DIR__ . '/db.php';
 
+session_start();
 header('Content-Type: application/json; charset=utf-8');
+
+const AUTH_USER = 'karen.l.s.gomes@gmail.com';
+const AUTH_PASS = 'Bibia.0110';
 
 function sendJson($data, int $status = 200): void {
   http_response_code($status);
@@ -14,6 +18,16 @@ function readJsonBody(): array {
   if ($raw === '') return [];
   $data = json_decode($raw, true);
   return is_array($data) ? $data : [];
+}
+
+function isAuthenticated(): bool {
+  return !empty($_SESSION['psicogestao_auth']) && $_SESSION['psicogestao_auth'] === true;
+}
+
+function requireAuth(): void {
+  if (!isAuthenticated()) {
+    sendJson(['error' => 'Nao autenticado'], 401);
+  }
 }
 
 function decodeTags($value): array {
@@ -77,9 +91,51 @@ function normalizeTxInput(array $src): array {
 try {
   $pdo = db();
 
+  // Verifica permissão de escrita em produção
+  $dbFile = __DIR__ . '/database.sqlite';
+  if (!is_writable($dbFile) || !is_writable(__DIR__)) {
+    $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+    if (in_array($method, ['POST', 'PUT', 'DELETE'])) {
+      sendJson(['error' => 'Permissao negada no disco. O servidor nao pode gravar no banco SQLite.', 'detail' => 'Verifique as permissoes da pasta e do arquivo database.sqlite no htdocs de producao.'], 500);
+    }
+  }
+
   $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
   $path = $_GET['path'] ?? '';
   $id = $_GET['id'] ?? null;
+
+  if ($path === 'auth/me' && $method === 'GET') {
+    if (isAuthenticated()) sendJson(['authenticated' => true, 'username' => AUTH_USER]);
+    sendJson(['authenticated' => false]);
+  }
+
+  if ($path === 'auth/login' && $method === 'POST') {
+    $body = readJsonBody();
+    $username = trim((string)($body['username'] ?? ''));
+    $password = trim((string)($body['password'] ?? ''));
+
+    if ($username === AUTH_USER && $password === AUTH_PASS) {
+      session_regenerate_id(true);
+      $_SESSION['psicogestao_auth'] = true;
+      $_SESSION['psicogestao_user'] = AUTH_USER;
+      sendJson(['ok' => true, 'username' => AUTH_USER]);
+    }
+
+    sendJson(['error' => 'Credenciais invalidas'], 401);
+  }
+
+  if ($path === 'auth/logout') {
+    $_SESSION = [];
+    if (ini_get('session.use_cookies')) {
+      $params = session_get_cookie_params();
+      setcookie(session_name(), '', time() - 42000, $params['path'], $params['domain'], $params['secure'], $params['httponly']);
+    }
+    session_destroy();
+    header('Location: login.php');
+    exit;
+  }
+
+  requireAuth();
 
   if ($path === 'transactions' && $method === 'GET') {
     $stmt = $pdo->query('SELECT * FROM transactions ORDER BY date DESC, rowid DESC');

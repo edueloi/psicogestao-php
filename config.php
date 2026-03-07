@@ -18,5 +18,5 @@ if ($is_local) {
 }
 
 // --- CONFIGURAÇÃO GEMINI AI ---
-define('GEMINI_API_KEY', 'AIzaSyBcLHc0XMaKxOQ34tIhDeALe-PNEePb9D8');
+define('GEMINI_API_KEY', 'AIzaSyDg8-m6-DLT5WTo4p7GiVjaT9g08HpNwiY');
 define('GEMINI_API_URL', 'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent');

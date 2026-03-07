@@ -1,4 +1,5 @@
 <?php
+ob_start();
 require __DIR__ . '/db.php';
 
 session_start();

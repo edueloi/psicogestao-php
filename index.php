@@ -1,4 +1,8 @@
 ﻿<?php
+ob_start();
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+
 /**
  * PsicoGestão - Sistema Unificado em PHP
  * Versão Refatorada - 100% Server-Side
@@ -20,7 +24,14 @@ if (empty($_SESSION['psicogestao_auth']) || $_SESSION['psicogestao_auth'] !== tr
 }
 
 $pdo = db();
+$user_id = $_SESSION['psicogestao_id'] ?? 'user_karen';
 $user_email = $_SESSION['psicogestao_user'] ?? 'karen.l.s.gomes@gmail.com';
+$user_name = $_SESSION['psicogestao_name'] ?? 'Karen Gomes';
+
+// Carregar Configurações de Sessão filtradas por usuário
+$stmt = $pdo->prepare('SELECT * FROM session_types WHERE userId = ? ORDER BY name ASC');
+$stmt->execute([$user_id]);
+$session_types = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // 2. Configurações e Regras de Negócio
 $TAB_SLUGS = [
@@ -29,6 +40,7 @@ $TAB_SLUGS = [
     'pacientes' => 'Pacientes',
     'reports' => 'AI Insights',
     'provisions' => 'Fiscal',
+    'settings' => 'Configurações',
 ];
 
 $active_tab = $_GET['tab'] ?? 'dashboard';
@@ -48,9 +60,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'save') {
         $id = $_POST['id'] ?? uniqid('tx_', true);
         $type = ($_POST['type'] === 'EXPENSE') ? 'EXPENSE' : 'INCOME';
-        
         $data = [
             'id' => $id,
+            'userId' => $user_id,
             'date' => $_POST['date'] ?? date('Y-m-d'),
             'description' => trim($_POST['description'] ?? 'Sem descrição'),
             'payerName' => trim($_POST['payerName'] ?? ''),
@@ -68,11 +80,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         ];
 
         if (!empty($_POST['is_edit'])) {
-            $stmt = $pdo->prepare('UPDATE transactions SET date=:date, description=:description, payerName=:payerName, payerCpf=:payerCpf, beneficiaryName=:beneficiaryName, beneficiaryCpf=:beneficiaryCpf, amount=:amount, type=:type, category=:category, method=:method, status=:status, receiptStatus=:receiptStatus, observation=:observation, tags=:tags WHERE id=:id');
+            $stmt = $pdo->prepare('UPDATE transactions SET date=:date, description=:description, payerName=:payerName, payerCpf=:payerCpf, beneficiaryName=:beneficiaryName, beneficiaryCpf=:beneficiaryCpf, amount=:amount, type=:type, category=:category, method=:method, status=:status, receiptStatus=:receiptStatus, observation=:observation, tags=:tags WHERE id=:id AND userId=:userId');
             $stmt->execute($data);
             $message = "✅ Lançamento atualizado!";
         } else {
-            $stmt = $pdo->prepare('INSERT INTO transactions (id, date, description, payerName, payerCpf, beneficiaryName, beneficiaryCpf, amount, type, category, method, status, receiptStatus, observation, tags) VALUES (:id, :date, :description, :payerName, :payerCpf, :beneficiaryName, :beneficiaryCpf, :amount, :type, :category, :method, :status, :receiptStatus, :observation, :tags)');
+            $stmt = $pdo->prepare('INSERT INTO transactions (id, userId, date, description, payerName, payerCpf, beneficiaryName, beneficiaryCpf, amount, type, category, method, status, receiptStatus, observation, tags) VALUES (:id, :userId, :date, :description, :payerName, :payerCpf, :beneficiaryName, :beneficiaryCpf, :amount, :type, :category, :method, :status, :receiptStatus, :observation, :tags)');
             $stmt->execute($data);
             $message = "✅ Novo lançamento gravado!";
         }
@@ -80,22 +92,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($action === 'delete') {
         $id = $_POST['id'] ?? '';
-        $stmt = $pdo->prepare('DELETE FROM transactions WHERE id = ?');
-        $stmt->execute([$id]);
+        $stmt = $pdo->prepare('DELETE FROM transactions WHERE id = ? AND userId = ?');
+        $stmt->execute([$id, $user_id]);
         $message = "🗑️ Lançamento excluído!";
     }
 
     if ($action === 'toggle-status') {
         $id = $_POST['id'] ?? '';
         $new_status = $_POST['new_status'] ?? 'PAID';
-        $stmt = $pdo->prepare('UPDATE transactions SET status = ? WHERE id = ?');
-        $stmt->execute([$new_status, $id]);
+        $stmt = $pdo->prepare('UPDATE transactions SET status = ? WHERE id = ? AND userId = ?');
+        $stmt->execute([$new_status, $id, $user_id]);
     }
 
     if ($action === 'repeat') {
         $id = $_POST['id'] ?? '';
-        $stmt = $pdo->prepare('SELECT * FROM transactions WHERE id = ?');
-        $stmt->execute([$id]);
+        $stmt = $pdo->prepare('SELECT * FROM transactions WHERE id = ? AND userId = ?');
+        $stmt->execute([$id, $user_id]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
         if ($row) {
             $dt = new DateTime($row['date']);
@@ -107,11 +119,55 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             
             $keys = array_keys($row);
             $cols = implode(',', $keys);
-            $placeholders = implode(',', array_map(fn($k) => ":$k", $keys));
+            $placeholders = implode(',', array_map(function($k) { return ":$k"; }, $keys));
             $stmt = $pdo->prepare("INSERT INTO transactions ($cols) VALUES ($placeholders)");
             $stmt->execute($row);
             $message = "🔁 Lançamento repetido para " . $dt->format('d/m/Y');
         }
+    }
+
+    if ($action === 'save_session_type') {
+        $id = $_POST['id'] ?: uniqid('st_', true);
+        $name = trim($_POST['name']);
+        $value = (float)str_replace(',', '.', $_POST['default_value']);
+        
+        $stmt = $pdo->prepare('REPLACE INTO session_types (id, userId, name, default_value) VALUES (?, ?, ?, ?)');
+        $stmt->execute([$id, $user_id, $name, $value]);
+        $_SESSION['message'] = "⚙️ Tipo de sessão '$name' salvo!";
+        header('Location: index.php?tab=settings'); exit;
+    }
+
+    if ($action === 'save_user') {
+        $id = $_POST['id'] ?: uniqid('user_', true);
+        $email = trim($_POST['email']);
+        $name = trim($_POST['name']);
+        $pass = trim($_POST['password']);
+        $crp = trim($_POST['crp']);
+        
+        $stmt = $pdo->prepare('REPLACE INTO users (id, email, password, name, crp) VALUES (?, ?, ?, ?, ?)');
+        $stmt->execute([$id, $email, $pass, $name, $crp]);
+        $_SESSION['message'] = "👤 Usuário '$name' salvo!";
+        header('Location: index.php?tab=settings'); exit;
+    }
+
+    if ($action === 'delete_user') {
+        $id = $_POST['id'];
+        if ($id === $user_id) {
+            $_SESSION['message'] = "❌ Você não pode excluir a si mesmo!";
+        } else {
+            $stmt = $pdo->prepare('DELETE FROM users WHERE id = ?');
+            $stmt->execute([$id]);
+            $_SESSION['message'] = "🗑️ Usuário removido!";
+        }
+        header('Location: index.php?tab=settings'); exit;
+    }
+
+    if ($action === 'delete_session_type') {
+        $id = $_POST['id'];
+        $stmt = $pdo->prepare('DELETE FROM session_types WHERE id = ?');
+        $stmt->execute([$id]);
+        $_SESSION['message'] = "🗑️ Tipo de sessão removido!";
+        header('Location: index.php?tab=settings'); exit;
     }
 
     if ($action === 'receipt') {
@@ -134,8 +190,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $type = (strtoupper($row[3]) === 'RECEITA') ? 'INCOME' : 'EXPENSE';
                 
                 $id = uniqid('tx_', true);
-                $stmt = $pdo->prepare('INSERT INTO transactions (id, date, description, amount, type, status, category, method) VALUES (?, ?, ?, ?, ?, "PAID", "Importado", "Outros")');
-                $stmt->execute([$id, $date, $desc, $amount, $type]);
+                $stmt = $pdo->prepare('INSERT INTO transactions (id, userId, date, description, amount, type, status, category, method) VALUES (?, ?, ?, ?, ?, ?, "PAID", "Importado", "Outros")');
+                $stmt->execute([$id, $user_id, $date, $desc, $amount, $type]);
                 $count++;
             }
             fclose($handle);
@@ -220,11 +276,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if (!$beneficiaryCpf) $beneficiaryCpf = $payerCpf;
             }
 
-            // Lógica de Categorização Inteligente baseada no Valor
-            $category = ($type === 'INCOME') ? 'Sessão Individual' : 'Despesa Geral';
-            if ($type === 'INCOME') {
-                if ($amount >= 360) $category = 'Pacote Semanal';
-                else if ($amount >= 200) $category = 'Sessão Individual';
+            // Lógica de Categorização Inteligente baseada no Valor (usando as Configurações)
+            $category = ($type === 'INCOME') ? 'Geral' : 'Despesa Geral';
+            if ($type === 'INCOME' && !empty($session_types)) {
+                foreach ($session_types as $st) {
+                    // Se o valor bater exatamente ou for muito próximo (0.01 de diferença)
+                    if (abs($amount - $st['default_value']) < 0.01) {
+                        $category = $st['name'];
+                        break;
+                    }
+                }
+                
+                // Fallback se não encontrar correspondência exata mas for um valor comum
+                if ($category === 'Geral') {
+                    if ($amount >= 360) $category = 'Pacote Semanal';
+                    else if ($amount >= 200) $category = 'Sessão Individual';
+                }
             }
 
             // Descrição Padrão baseada na categoria
@@ -232,9 +299,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($obs_base && strlen($obs_base) < 60) $description = $obs_base;
 
             $id = uniqid('tx_', true);
-            $stmt = $pdo->prepare('INSERT INTO transactions (id, date, description, payerName, payerCpf, beneficiaryName, beneficiaryCpf, amount, type, status, category, method, observation) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, "PAID", ?, ?, ?)');
+            $stmt = $pdo->prepare('INSERT INTO transactions (id, userId, date, description, payerName, payerCpf, beneficiaryName, beneficiaryCpf, amount, type, status, category, method, observation) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "PAID", ?, ?, ?)');
             $stmt->execute([
                 $id, 
+                $user_id,
                 $date, 
                 $description, 
                 $payer, 
@@ -268,11 +336,59 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'delete_month') {
         $m = $_POST['month_val'] ?? ''; // YYYY-MM
         if ($m) {
-            $stmt = $pdo->prepare('DELETE FROM transactions WHERE strftime("%Y-%m", date) = ?');
-            $stmt->execute([$m]);
+            $stmt = $pdo->prepare('DELETE FROM transactions WHERE strftime("%Y-%m", date) = ? AND userId = ?');
+            $stmt->execute([$m, $user_id]);
             $_SESSION['message'] = "🗑️ Todos os lançamentos de " . getMonthName($m) . " foram excluídos!";
         }
         header("Location: index.php?tab=cashbook"); exit;
+    }
+
+    if ($action === 'duplicate_month') {
+        $source_m = $_POST['source_month'] ?? ''; // YYYY-MM
+        $target_m = $_POST['target_month'] ?? ''; // YYYY-MM
+        
+        if ($source_m && $target_m) {
+            $stmt = $pdo->prepare('SELECT * FROM transactions WHERE strftime("%Y-%m", date) = ?');
+            $stmt->execute([$source_m]);
+            $to_dup = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            $count = 0;
+            
+            // Calculate day difference or just target same day in new month
+            foreach($to_dup as $row) {
+                $old_dt = new DateTime($row['date']);
+                $day = $old_dt->format('d');
+                
+                // Create new date: Target Year-Month + Original Day
+                // Handle months with fewer days (e.g., Feb 30th)
+                $new_date_str = $target_m . '-' . $day;
+                $new_dt = new DateTime($new_date_str);
+                
+                // Safety check for month overflow (e.g., Feb 31 -> Mar 02)
+                if ($new_dt->format('Y-m') !== $target_m) {
+                    $new_dt = new DateTime($target_m . '-01');
+                    $new_dt->modify('last day of this month');
+                }
+
+                $row['id'] = uniqid('tx_', true);
+                $row['date'] = $new_dt->format('Y-m-d');
+                $row['status'] = 'PENDING';
+                $row['receiptStatus'] = ($row['type'] === 'INCOME') ? 'PENDING' : null;
+                
+                $keys = array_keys($row);
+                foreach($keys as $ki => $kv) if(is_numeric($kv)) unset($keys[$ki]);
+
+                $clean_row = [];
+                foreach($keys as $key) $clean_row[$key] = $row[$key];
+
+                $cols = implode(',', $keys);
+                $placeholders = implode(',', array_map(function($k) { return ":$k"; }, $keys));
+                $stmt_ins = $pdo->prepare("INSERT INTO transactions ($cols) VALUES ($placeholders)");
+                $stmt_ins->execute($clean_row);
+                $count++;
+            }
+            $_SESSION['message'] = "🔁 $count lançamentos duplicados de " . getMonthName($source_m) . " para " . getMonthName($target_m);
+        }
+        header("Location: index.php?tab=cashbook&month=$target_m"); exit;
     }
 }
 
@@ -303,18 +419,18 @@ if ($dash_month !== 'all') {
     $params_dash[] = $dash_year;
 }
 
-$sql_dash = "SELECT * FROM transactions";
-if ($where_dash) $sql_dash .= " WHERE " . implode(" AND ", $where_dash);
+$sql_dash = "SELECT * FROM transactions WHERE userId = ?";
+if ($where_dash) $sql_dash .= " AND " . implode(" AND ", $where_dash);
 $stmt = $pdo->prepare($sql_dash);
-$stmt->execute($params_dash);
+$stmt->execute(array_merge([$user_id], $params_dash));
 $totals_dashboard = calcTotals($stmt->fetchAll(PDO::FETCH_ASSOC));
 
 // Previous Month for comparison
 $prev_month_ts = strtotime(($dash_month === 'all' ? $dash_year : "$dash_year-$dash_month-01") . " -1 month");
 $pm = date('m', $prev_month_ts);
 $py = date('Y', $prev_month_ts);
-$stmt = $pdo->prepare("SELECT * FROM transactions WHERE strftime('%m', date) = ? AND strftime('%Y', date) = ?");
-$stmt->execute([$pm, $py]);
+$stmt = $pdo->prepare("SELECT * FROM transactions WHERE strftime('%m', date) = ? AND strftime('%Y', date) = ? AND userId = ?");
+$stmt->execute([$pm, $py, $user_id]);
 $totals_prev = calcTotals($stmt->fetchAll(PDO::FETCH_ASSOC));
 
 // Cashbook Filters
@@ -340,14 +456,16 @@ if ($filter_search !== '') {
     $params[] = $like; $params[] = $like; $params[] = $like;
 }
 
-$sql_all = "SELECT * FROM transactions ORDER BY date DESC, rowid DESC";
-$all_tx = $pdo->query($sql_all)->fetchAll(PDO::FETCH_ASSOC);
+$sql_all = "SELECT * FROM transactions WHERE userId = ? ORDER BY date DESC, rowid DESC";
+$all_tx = $pdo->prepare($sql_all);
+$all_tx->execute([$user_id]);
+$all_tx = $all_tx->fetchAll(PDO::FETCH_ASSOC);
 
-$sql_filtered = "SELECT * FROM transactions";
-if ($where) $sql_filtered .= " WHERE " . implode(" AND ", $where);
+$sql_filtered = "SELECT * FROM transactions WHERE userId = ?";
+if ($where) $sql_filtered .= " AND " . implode(" AND ", $where);
 $sql_filtered .= " ORDER BY date DESC, rowid DESC";
 $stmt = $pdo->prepare($sql_filtered);
-$stmt->execute($params);
+$stmt->execute(array_merge([$user_id], $params));
 $filtered_tx = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // 5. Cálculos do Dashboard/Resumo
@@ -397,9 +515,19 @@ foreach($available_months as $m) {
 $totals_all = calcTotals($all_tx);
 $totals_filtered = calcTotals($filtered_tx);
 
+// Filtros de Cálculo de Pacientes
+$p_month = $_GET['p_month'] ?? 'all';
+$p_year = $_GET['p_year'] ?? 'all';
+$p_status = $_GET['p_status'] ?? 'all';
+
 $pacientes = [];
 foreach($all_tx as $tx) {
     if ($tx['type'] === 'INCOME' && !empty($tx['beneficiaryName'])) {
+        // Aplicar Filtros de Período e Status
+        if ($p_status !== 'all' && $tx['status'] !== $p_status) continue;
+        if ($p_year !== 'all' && date('Y', strtotime($tx['date'])) !== $p_year) continue;
+        if ($p_month !== 'all' && date('m', strtotime($tx['date'])) !== str_pad($p_month, 2, '0', STR_PAD_LEFT)) continue;
+
         $key = trim($tx['beneficiaryName']) . '|' . trim($tx['beneficiaryCpf']);
         if (!isset($pacientes[$key])) {
             $pacientes[$key] = [
@@ -551,6 +679,11 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                         <span class="text-[13px] font-bold relative z-10">Fiscal & Tributário</span>
                         <?php if($active_tab=='provisions'): ?> <div class="absolute inset-0 bg-gradient-to-r from-slate-800 to-slate-900 opacity-100"></div> <?php endif; ?>
                     </a>
+                    <a href="?tab=settings" class="flex items-center gap-3.5 px-5 py-3 rounded-2xl transition-all group relative overflow-hidden <?= $active_tab=='settings' ? 'sidebar-item-active text-white' : 'text-slate-500 hover:bg-slate-50' ?>">
+                        <span class="w-5 text-center relative z-10"><i class="fa-solid fa-gear"></i></span>
+                        <span class="text-[13px] font-bold relative z-10">Configurações</span>
+                        <?php if($active_tab=='settings'): ?> <div class="absolute inset-0 bg-gradient-to-r from-slate-800 to-slate-900 opacity-100"></div> <?php endif; ?>
+                    </a>
                 </div>
 
                 <div class="pt-6 mt-4 border-t border-slate-50">
@@ -616,17 +749,17 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                         <div class="relative">
                             <button onclick="toggleProfileMenu(event)" class="flex items-center gap-3 px-3 py-2 rounded-2xl hover:bg-slate-50 transition-all group">
                                 <div class="text-right hidden sm:block">
-                                    <p class="text-[11px] font-black text-slate-900 leading-none">Karen Gomes</p>
-                                    <p class="text-[9px] text-emerald-500 font-bold uppercase mt-1 tracking-widest text-right">Psicóloga Online</p>
+                                    <p class="text-[11px] font-black text-slate-900 leading-none"><?= htmlspecialchars($user_name) ?></p>
+                                    <p class="text-[9px] text-emerald-500 font-bold uppercase mt-1 tracking-widest text-right">Acesso Profissional</p>
                                 </div>
-                                <img src="https://ui-avatars.com/api/?name=Karen+Gomes&background=4f46e5&color=fff" class="w-9 h-9 rounded-xl ring-2 ring-indigo-50 group-hover:ring-indigo-100 transition-all shadow-sm">
+                                <img src="https://ui-avatars.com/api/?name=<?= urlencode($user_name) ?>&background=4f46e5&color=fff" class="w-9 h-9 rounded-xl ring-2 ring-indigo-50 group-hover:ring-indigo-100 transition-all shadow-sm">
                             </button>
                             
                             <!-- Dropdown Menu -->
                             <div id="profileDropdown" class="absolute right-0 mt-2 w-56 bg-white rounded-[2rem] shadow-2xl border border-slate-100 py-3 hidden z-50 animate-fade-in origin-top-right">
                                 <div class="px-6 py-4 border-b border-slate-50">
-                                    <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Conta Ativa</p>
-                                    <p class="text-[9px] font-bold text-slate-800 truncate"><?= $user_email ?></p>
+                                    <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Usuário logado</p>
+                                    <p class="text-[9px] font-bold text-slate-800 truncate"><?= htmlspecialchars($user_email) ?></p>
                                 </div>
                                 
                                 <div class="p-2">
@@ -799,9 +932,14 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                                         <div class="relative z-10">
                                             <div class="flex justify-between items-start mb-3">
                                                 <p class="text-[10px] font-black text-indigo-500 uppercase tracking-[0.2em]">CONSOLIDADO</p>
-                                                <button onclick="triggerConfirm('Excluir Mês', 'Deseja apagar TODOS os lançamentos de <?= getMonthName($m) ?>? Esta ação é irreversível.', 'delete_month', '', '<?= $m ?>')" class="w-8 h-8 flex items-center justify-center bg-rose-50 text-rose-500 rounded-full opacity-0 group-hover:opacity-100 transition-all hover:bg-rose-500 hover:text-white" title="Excluir Mês Inteiro">
-                                                    <span class="text-xs">🗑️</span>
-                                                </button>
+                                                <div class="flex gap-2">
+                                                    <button onclick="openDuplicateModal('<?= $m ?>', '<?= getMonthName($m) ?>')" class="w-8 h-8 flex items-center justify-center bg-indigo-50 text-indigo-600 rounded-full opacity-0 group-hover:opacity-100 transition-all hover:bg-indigo-600 hover:text-white" title="Duplicar registros para outro mês">
+                                                        <span class="text-xs">🔁</span>
+                                                    </button>
+                                                    <button onclick="triggerConfirm('Excluir Mês', 'Deseja apagar TODOS os lançamentos de <?= getMonthName($m) ?>? Esta ação é irreversível.', 'delete_month', '', '<?= $m ?>')" class="w-8 h-8 flex items-center justify-center bg-rose-50 text-rose-500 rounded-full opacity-0 group-hover:opacity-100 transition-all hover:bg-rose-500 hover:text-white" title="Excluir Mês Inteiro">
+                                                        <span class="text-xs">🗑️</span>
+                                                    </button>
+                                                </div>
                                             </div>
                                             <h4 class="text-2xl font-black text-slate-900 mb-8"><?= getMonthName($m) ?></h4>
                                             
@@ -938,59 +1076,80 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                                                 $is_income = $t['type'] === 'INCOME';
                                                 $amt_color = $is_income ? 'text-emerald-600' : 'text-rose-600';
                                                 ?>
-                                                <tr class="hover:bg-slate-50/50 transition-all">
-                                                    <td class="px-4 lg:px-8 py-6 text-sm text-slate-500 font-bold"><?= fmtDateBR($t['date']) ?></td>
+                                                <tr class="hover:bg-slate-50/80 transition-all border-b border-slate-50 last:border-0 group">
                                                     <td class="px-4 lg:px-8 py-6">
-                                                        <p class="text-sm font-black text-slate-900"><?= htmlspecialchars($t['description']) ?></p>
-                                                        <div class="flex flex-wrap gap-2 mt-1.5">
-                                                            <span class="text-[8px] lg:text-[9px] font-black px-2 py-0.5 rounded bg-slate-100 text-slate-500 uppercase"><?= htmlspecialchars($t['method']) ?></span>
-                                                            <span class="text-[8px] lg:text-[9px] font-black px-2 py-0.5 rounded bg-indigo-50 text-indigo-500 uppercase"><?= htmlspecialchars($t['category']) ?></span>
+                                                        <div class="flex flex-col">
+                                                            <span class="text-sm font-black text-slate-900"><?= fmtDateBR($t['date']) ?></span>
+                                                            <span class="text-[10px] text-slate-400 font-bold uppercase tracking-tight mt-0.5"><?= date('l', strtotime($t['date'])) ?></span>
                                                         </div>
+                                                    </td>
+                                                    <td class="px-4 lg:px-8 py-6">
+                                                        <p class="text-[13px] font-black text-slate-800 group-hover:text-indigo-600 transition-colors"><?= htmlspecialchars($t['description']) ?></p>
+                                                        <div class="flex flex-wrap gap-1.5 mt-2">
+                                                            <span class="text-[8px] font-black px-2 py-0.5 rounded-lg bg-slate-100 text-slate-500 uppercase border border-slate-200/50"><?= htmlspecialchars($t['method']) ?></span>
+                                                            <span class="text-[8px] font-black px-2 py-0.5 rounded-lg bg-indigo-50 text-indigo-500 uppercase border border-indigo-100/50"><?= htmlspecialchars($t['category']) ?></span>
+                                                        </div>
+                                                        <?php if(!empty($t['observation'])): ?>
+                                                            <p class="mt-2 text-[10px] text-slate-400 font-medium italic line-clamp-1 group-hover:line-clamp-none transition-all leading-tight border-l-2 border-slate-100 pl-2"><?= htmlspecialchars($t['observation']) ?></p>
+                                                        <?php endif; ?>
                                                     </td>
                                                     <td class="hidden lg:table-cell px-8 py-6">
-                                                    <td class="px-8 py-6">
-                                                        <div class="space-y-1">
-                                                            <div class="flex items-center gap-2">
-                                                                <span class="w-1.5 h-1.5 rounded-full bg-slate-300"></span>
-                                                                <p class="text-[11px] font-bold text-slate-700">Pág: <span class="font-medium text-slate-500"><?= htmlspecialchars($t['payerName']) ?: 'N/A' ?></span></p>
+                                                        <div class="flex flex-col gap-2.5">
+                                                            <?php if($t['payerName']): ?>
+                                                            <div class="flex items-center gap-2.5">
+                                                                <div class="w-7 h-7 bg-slate-100 rounded-lg flex items-center justify-center text-slate-400 text-[10px] shadow-inner"><i class="fa-solid fa-wallet"></i></div>
+                                                                <div>
+                                                                    <div class="flex items-center gap-2 mb-1">
+                                                                        <p class="text-[10px] font-black text-slate-400 uppercase leading-none">Pagador</p>
+                                                                        <?php if($t['payerCpf']): ?>
+                                                                            <span class="text-[9px] font-bold text-slate-300 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-100"><?= htmlspecialchars($t['payerCpf']) ?></span>
+                                                                        <?php endif; ?>
+                                                                    </div>
+                                                                    <p class="text-[11px] font-bold text-slate-700 leading-none"><?= htmlspecialchars($t['payerName']) ?></p>
+                                                                </div>
                                                             </div>
-                                                            <?php if($t['payerCpf']): ?>
-                                                                <p class="text-[9px] font-bold text-slate-400 ml-3.5 italic"><?= htmlspecialchars($t['payerCpf']) ?></p>
                                                             <?php endif; ?>
                                                             
-                                                            <div class="flex items-center gap-2 mt-1">
-                                                                <span class="w-1.5 h-1.5 rounded-full bg-indigo-400"></span>
-                                                                <p class="text-[11px] font-bold text-indigo-600">Pac: <span class="font-medium text-indigo-400"><?= htmlspecialchars($t['beneficiaryName']) ?: 'N/A' ?></span></p>
+                                                            <?php if($t['beneficiaryName']): ?>
+                                                            <div class="flex items-center gap-2.5">
+                                                                <div class="w-7 h-7 bg-indigo-50 rounded-lg flex items-center justify-center text-indigo-400 text-[10px] shadow-inner"><i class="fa-solid fa-person-rays"></i></div>
+                                                                <div>
+                                                                    <div class="flex items-center gap-2 mb-1">
+                                                                        <p class="text-[10px] font-black text-indigo-300 uppercase leading-none">Paciente</p>
+                                                                        <?php if($t['beneficiaryCpf']): ?>
+                                                                            <span class="text-[9px] font-bold text-indigo-200 bg-indigo-50/50 px-1.5 py-0.5 rounded border border-indigo-100/30"><?= htmlspecialchars($t['beneficiaryCpf']) ?></span>
+                                                                        <?php endif; ?>
+                                                                    </div>
+                                                                    <p class="text-[11px] font-bold text-indigo-600 leading-none"><?= htmlspecialchars($t['beneficiaryName']) ?></p>
+                                                                </div>
                                                             </div>
-                                                            <?php if($t['beneficiaryCpf']): ?>
-                                                                <p class="text-[9px] font-bold text-indigo-300 ml-3.5 italic"><?= htmlspecialchars($t['beneficiaryCpf']) ?></p>
                                                             <?php endif; ?>
                                                         </div>
                                                     </td>
-                                                    <td class="px-4 lg:px-8 py-6 text-right whitespace-nowrap">
-                                                        <p class="text-base lg:text-lg font-black <?= $amt_color ?>"><?= $is_income ? '+' : '-' ?> <?= fmtBRL($t['amount']) ?></p>
+                                                    <td class="px-4 lg:px-8 py-6 text-right">
+                                                        <p class="text-lg font-black <?= $amt_color ?> tracking-tight"><?= $is_income ? '+' : '-' ?> <?= fmtBRL($t['amount']) ?></p>
                                                     </td>
                                                     <td class="hidden md:table-cell px-8 py-6">
-                                                        <div class="flex flex-col gap-2 scale-90">
+                                                        <div class="flex justify-center">
                                                             <form method="POST">
                                                                 <input type="hidden" name="action" value="toggle-status">
                                                                 <input type="hidden" name="id" value="<?= $t['id'] ?>">
                                                                 <input type="hidden" name="new_status" value="<?= $t['status']=='PAID' ? 'PENDING' : 'PAID' ?>">
-                                                                <button type="submit" class="w-full text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-xl border <?= $t['status']=='PAID' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-amber-50 text-amber-600 border-amber-100' ?>">
-                                                                    <i class="fa-solid <?= $t['status']=='PAID' ? 'fa-circle-check' : 'fa-clock' ?> mr-2"></i> <?= $t['status'] == 'PAID' ? 'Pago' : 'Pendente' ?>
+                                                                <button type="submit" class="text-[9px] font-black uppercase tracking-widest px-4 py-1.5 rounded-xl border-2 transition-all hover:scale-105 <?= $t['status']=='PAID' ? 'bg-emerald-50 text-emerald-600 border-emerald-100/50 shadow-sm' : 'bg-amber-50 text-amber-600 border-amber-100/50 shadow-sm' ?>">
+                                                                    <i class="fa-solid <?= $t['status']=='PAID' ? 'fa-circle-check' : 'fa-clock' ?> mr-1.5"></i> <?= $t['status'] == 'PAID' ? 'Pago' : 'Pendente' ?>
                                                                 </button>
                                                             </form>
                                                         </div>
                                                     </td>
-                                                    <td class="px-4 lg:px-8 py-6 text-right whitespace-nowrap">
-                                                        <div class="flex justify-end gap-1 lg:gap-2">
-                                                            <button onclick="editTx(<?= htmlspecialchars(json_encode($t)) ?>)" class="w-7 h-7 lg:w-8 lg:h-8 flex items-center justify-center bg-slate-50 rounded-lg lg:rounded-xl hover:bg-indigo-600 hover:text-white text-slate-400 transition-all shadow-sm"><i class="fa-solid fa-pen-to-square text-[10px] lg:text-sm"></i></button>
+                                                    <td class="px-4 lg:px-8 py-6 text-right">
+                                                        <div class="flex justify-end gap-2 opacity-40 group-hover:opacity-100 transition-opacity">
+                                                            <button onclick="editTx(<?= htmlspecialchars(json_encode($t)) ?>)" class="w-8 h-8 flex items-center justify-center bg-white border border-slate-200 rounded-xl hover:bg-slate-900 hover:text-white hover:border-slate-900 text-slate-400 transition-all shadow-sm"><i class="fa-solid fa-pen-to-square text-xs"></i></button>
                                                             <form method="POST" class="inline">
                                                                 <input type="hidden" name="action" value="repeat">
                                                                 <input type="hidden" name="id" value="<?= $t['id'] ?>">
-                                                                <button type="submit" class="w-7 h-7 lg:w-8 lg:h-8 flex items-center justify-center bg-slate-50 rounded-lg lg:rounded-xl hover:bg-emerald-500 hover:text-white text-slate-400 transition-all shadow-sm"><i class="fa-solid fa-rotate-right text-[10px] lg:text-sm"></i></button>
+                                                                <button type="submit" class="w-8 h-8 flex items-center justify-center bg-white border border-slate-200 rounded-xl hover:bg-emerald-500 hover:text-white hover:border-emerald-500 text-slate-400 transition-all shadow-sm"><i class="fa-solid fa-rotate-right text-xs"></i></button>
                                                             </form>
-                                                            <button onclick="triggerConfirm('Excluir?', 'Este registro será removido.', 'delete', '<?= $t['id'] ?>')" class="w-7 h-7 lg:w-8 lg:h-8 flex items-center justify-center bg-slate-50 rounded-lg lg:rounded-xl hover:bg-rose-500 hover:text-white text-slate-400 transition-all shadow-sm"><i class="fa-solid fa-trash-can text-[10px] lg:text-sm"></i></button>
+                                                            <button onclick="triggerConfirm('Excluir?', 'Este registro será removido.', 'delete', '<?= $t['id'] ?>')" class="w-8 h-8 flex items-center justify-center bg-white border border-slate-200 rounded-xl hover:bg-rose-500 hover:text-white hover:border-rose-500 text-slate-400 transition-all shadow-sm"><i class="fa-solid fa-trash-can text-xs"></i></button>
                                                         </div>
                                                     </td>
                                                 </tr>
@@ -1036,17 +1195,23 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                                                                 <div class="w-1.5 h-1.5 rounded-full bg-slate-400"></div>
                                                                 <p class="text-[10px] font-bold text-slate-700 truncate"><?= htmlspecialchars($t['payerName']) ?: 'N/A' ?></p>
                                                             </div>
-                                                            <span class="text-[9px] font-black text-slate-300"><?= $t['payerCpf'] ?: '' ?></span>
+                                                            <span class="text-[9px] font-black text-slate-300"><?= htmlspecialchars($t['payerCpf']) ?: '' ?></span>
                                                         </div>
                                                         <div class="flex justify-between items-start border-t border-slate-100 pt-2">
                                                             <div class="flex items-center gap-2">
                                                                 <div class="w-1.5 h-1.5 rounded-full bg-indigo-500"></div>
                                                                 <p class="text-[10px] font-black text-indigo-600 truncate"><?= htmlspecialchars($t['beneficiaryName']) ?: 'N/A' ?></p>
                                                             </div>
-                                                            <span class="text-[9px] font-black text-indigo-300"><?= $t['beneficiaryCpf'] ?: '' ?></span>
+                                                            <span class="text-[9px] font-black text-indigo-300"><?= htmlspecialchars($t['beneficiaryCpf']) ?: '' ?></span>
                                                         </div>
                                                     </div>
                                                 </div>
+
+                                                <?php if(!empty($t['observation'])): ?>
+                                                    <div class="bg-slate-50/40 p-3 rounded-xl border border-dashed border-slate-200">
+                                                        <p class="text-[10px] text-slate-400 italic font-medium leading-tight"><?= htmlspecialchars($t['observation']) ?></p>
+                                                    </div>
+                                                <?php endif; ?>
                                             </div>
                                         </div>
 
@@ -1096,24 +1261,67 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                         </div>
 
                         <!-- Filtros de Pacientes -->
-                        <div class="bg-white p-4 rounded-[2.5rem] border border-slate-200 shadow-sm flex flex-col md:flex-row gap-4 items-center">
-                            <form class="flex-1 flex flex-col md:flex-row gap-4 w-full">
+                        <div class="bg-white p-6 rounded-[2.5rem] border border-slate-200 shadow-sm">
+                            <form class="flex flex-col gap-4">
                                 <input type="hidden" name="tab" value="pacientes">
-                                <div class="relative flex-1">
-                                    <span class="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400"><i class="fa-solid fa-magnifying-glass"></i></span>
-                                    <input type="text" name="p_search" value="<?= $p_search ?>" placeholder="Buscar por nome ou CPF..." class="w-full pl-12 pr-5 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-indigo-50 transition-all">
+                                
+                                <div class="flex flex-col md:flex-row gap-4">
+                                    <div class="relative flex-1">
+                                        <span class="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400"><i class="fa-solid fa-magnifying-glass"></i></span>
+                                        <input type="text" name="p_search" value="<?= $p_search ?>" placeholder="Buscar por nome ou CPF..." class="w-full pl-12 pr-5 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-indigo-50 transition-all">
+                                    </div>
+                                    
+                                    <div class="flex flex-wrap gap-2">
+                                        <select name="p_month" onchange="this.form.submit()" class="px-4 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl text-[11px] font-black uppercase tracking-widest outline-none focus:ring-4 focus:ring-indigo-50 transition-all">
+                                            <option value="all">Mês: Todos</option>
+                                            <?php foreach([1,2,3,4,5,6,7,8,9,10,11,12] as $m_num): ?>
+                                                <option value="<?= $m_num ?>" <?= $p_month == $m_num ? 'selected' : '' ?>><?= $mon_names[$m_num-1] ?></option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                        
+                                        <select name="p_year" onchange="this.form.submit()" class="px-4 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl text-[11px] font-black uppercase tracking-widest outline-none focus:ring-4 focus:ring-indigo-50 transition-all">
+                                            <option value="all">Ano: Todos</option>
+                                            <?php foreach($available_years as $y): ?>
+                                                <option value="<?= $y ?>" <?= $p_year == $y ? 'selected' : '' ?>><?= $y ?></option>
+                                            <?php endforeach; ?>
+                                        </select>
+
+                                        <select name="p_status" onchange="this.form.submit()" class="px-4 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl text-[11px] font-black uppercase tracking-widest outline-none focus:ring-4 focus:ring-indigo-50 transition-all">
+                                            <option value="all">Status: Todos</option>
+                                            <option value="PAID" <?= $p_status == 'PAID' ? 'selected' : '' ?>>Somente Pagos</option>
+                                            <option value="PENDING" <?= $p_status == 'PENDING' ? 'selected' : '' ?>>Somente Pendentes</option>
+                                        </select>
+                                    </div>
                                 </div>
-                                <div class="flex gap-2 w-full md:w-auto">
-                                    <select name="p_sort" onchange="this.form.submit()" class="flex-1 md:w-48 px-5 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-indigo-50 transition-all">
-                                        <option value="nome" <?= $p_sort=='nome'?'selected':'' ?>>Nome (A-Z)</option>
-                                        <option value="valor" <?= $p_sort=='valor'?'selected':'' ?>>Faturamento (Maior)</option>
-                                        <option value="sessoes" <?= $p_sort=='sessoes'?'selected':'' ?>>Nº de Sessões</option>
-                                        <option value="recente" <?= $p_sort=='recente'?'selected':'' ?>>Sessão Recente</option>
-                                    </select>
-                                    <?php if($p_search): ?>
-                                        <a href="?tab=pacientes" class="w-12 h-12 bg-slate-100 text-slate-400 rounded-2xl flex items-center justify-center hover:bg-rose-50 hover:text-rose-500 transition-all">✕</a>
-                                    <?php endif; ?>
-                                    <button type="submit" class="px-8 py-3.5 bg-slate-900 text-white rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-slate-800 transition-all">Filtrar</button>
+
+                                <div class="flex flex-col md:flex-row justify-between items-center gap-4 pt-2 border-t border-slate-50">
+                                    <div class="flex items-center gap-3">
+                                        <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Ordenar por:</p>
+                                        <div class="flex gap-1">
+                                            <?php 
+                                            $sort_opts = [
+                                                'nome' => 'Nome',
+                                                'valor' => 'Faturamento',
+                                                'sessoes' => 'Sessões',
+                                                'recente' => 'Recente'
+                                            ];
+                                            foreach($sort_opts as $val => $label): 
+                                            ?>
+                                                <button type="submit" name="p_sort" value="<?= $val ?>" class="px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all <?= $p_sort == $val ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-100' : 'bg-slate-50 text-slate-400 hover:bg-slate-100' ?>">
+                                                    <?= $label ?>
+                                                </button>
+                                            <?php endforeach; ?>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="flex gap-2">
+                                        <?php if($p_search || $p_month != 'all' || $p_year != 'all' || $p_status != 'all'): ?>
+                                            <a href="?tab=pacientes" class="px-6 py-3 bg-rose-50 text-rose-500 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-rose-100 transition-all flex items-center gap-2">
+                                                <i class="fa-solid fa-xmark"></i> Limpar Filtros
+                                            </a>
+                                        <?php endif; ?>
+                                        <button type="submit" class="px-8 py-3 bg-slate-900 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-800 transition-all shadow-lg italic">Aplicar Filtros</button>
+                                    </div>
                                 </div>
                             </form>
                         </div>
@@ -1273,6 +1481,137 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                             </div>
                         </div>
                     </div>
+                <?php elseif ($active_tab === 'settings'): 
+                    $stmt_u = $pdo->query('SELECT * FROM users ORDER BY name ASC');
+                    $all_users = $stmt_u->fetchAll(PDO::FETCH_ASSOC);
+                ?>
+                    <div class="max-w-4xl mx-auto space-y-8 pb-20">
+                        <div class="flex flex-col sm:flex-row justify-between items-center bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-sm gap-4">
+                            <div class="text-center sm:text-left">
+                                <h3 class="text-2xl font-black text-slate-900 tracking-tighter">Painel de Controle</h3>
+                                <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Gestão de Serviços e Usuários</p>
+                            </div>
+                            <div class="flex gap-2">
+                                <button onclick="resetStForm(); document.getElementById('session_section').scrollIntoView({behavior:'smooth'})" class="px-4 py-2 bg-indigo-600 text-white rounded-xl text-[8px] font-black uppercase tracking-widest hover:bg-slate-900 transition-all shadow-md shadow-indigo-100">Novo Serviço</button>
+                                <button onclick="resetUserForm(); document.getElementById('user_section').scrollIntoView({behavior:'smooth'})" class="px-4 py-2 bg-slate-900 text-white rounded-xl text-[8px] font-black uppercase tracking-widest hover:bg-indigo-600 transition-all shadow-md shadow-slate-100">Novo Usuário</button>
+                            </div>
+                        </div>
+
+                        <!-- SEÇÃO: SERVIÇOS -->
+                        <div id="session_section" class="scroll-mt-24 bg-white p-6 rounded-[3rem] border border-slate-200 shadow-sm">
+                            <div class="flex items-center gap-2 mb-6 ml-2">
+                                <div class="w-6 h-6 rounded-lg bg-indigo-50 text-indigo-500 flex items-center justify-center text-[10px]"><i class="fa-solid fa-tag"></i></div>
+                                <h4 class="text-sm font-black text-slate-800 tracking-tight">Serviços e Valores</h4>
+                            </div>
+
+                            <div class="grid grid-cols-1 lg:grid-cols-5 gap-6">
+                                <div class="lg:col-span-2">
+                                    <div class="bg-slate-50 p-6 rounded-[2rem] border border-slate-100">
+                                        <h5 id="st_title" class="text-[8px] font-black text-slate-400 mb-4 uppercase tracking-widest">Configurar Item</h5>
+                                        <form method="POST" class="space-y-3">
+                                            <input type="hidden" name="action" value="save_session_type">
+                                            <input type="hidden" name="id" id="st_id" value="">
+                                            
+                                            <div class="space-y-1">
+                                                <input type="text" name="name" id="st_name" required placeholder="Nome do Serviço" class="w-full px-4 py-2.5 bg-white border border-slate-100 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-100 transition-all">
+                                            </div>
+                                            <div class="space-y-1">
+                                                <input type="text" name="default_value" id="st_value" required placeholder="Valor (R$)" class="w-full px-4 py-2.5 bg-white border border-slate-100 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-100 transition-all">
+                                            </div>
+                                            <div class="pt-1 flex gap-2">
+                                                <button type="submit" class="flex-1 py-3 bg-indigo-600 text-white rounded-xl text-[8px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-sm italic">Salvar</button>
+                                                <button type="button" onclick="resetStForm()" class="px-3 py-3 bg-white text-slate-300 rounded-xl hover:bg-slate-100 transition-all border border-slate-100"><i class="fa-solid fa-xmark"></i></button>
+                                            </div>
+                                        </form>
+                                    </div>
+                                </div>
+                                <div class="lg:col-span-3">
+                                    <?php if(empty($session_types)): ?>
+                                        <div class="h-full bg-slate-50 rounded-[2rem] border border-dashed border-slate-200 flex flex-col items-center justify-center p-6 text-center">
+                                            <p class="text-[10px] text-slate-300 font-bold uppercase tracking-widest">Nenhum serviço salvo</p>
+                                        </div>
+                                    <?php else: ?>
+                                        <div class="space-y-2">
+                                            <?php foreach($session_types as $st): ?>
+                                                <div class="bg-white p-3 px-4 rounded-2xl border border-slate-100 flex items-center justify-between group hover:border-indigo-200 transition-all shadow-sm">
+                                                    <div class="flex items-center gap-3">
+                                                        <div class="w-8 h-8 bg-indigo-50 rounded-lg flex items-center justify-center text-indigo-400 transition-all text-xs"><i class="fa-solid fa-fingerprint"></i></div>
+                                                        <div class="min-w-0">
+                                                            <h5 class="font-black text-slate-800 truncate text-[11px]"><?= htmlspecialchars($st['name']) ?></h5>
+                                                            <p class="text-emerald-500 font-black text-[9px]"><?= fmtBRL($st['default_value']) ?></p>
+                                                        </div>
+                                                    </div>
+                                                    <div class="flex gap-1.5 opacity-0 group-hover:opacity-100 transition-all">
+                                                        <button onclick='editSt(<?= json_encode($st) ?>)' class="w-7 h-7 flex items-center justify-center bg-slate-50 text-slate-400 rounded-lg hover:bg-slate-900 hover:text-white transition-all text-[10px]"><i class="fa-solid fa-pen"></i></button>
+                                                        <form method="POST" onsubmit="return confirm('Excluir?')" class="flex-shrink-0">
+                                                            <input type="hidden" name="action" value="delete_session_type">
+                                                            <input type="hidden" name="id" value="<?= $st['id'] ?>">
+                                                            <button type="submit" class="w-7 h-7 flex items-center justify-center bg-slate-50 text-rose-300 rounded-lg hover:bg-rose-500 hover:text-white transition-all text-[10px]"><i class="fa-solid fa-trash-can"></i></button>
+                                                        </form>
+                                                    </div>
+                                                </div>
+                                            <?php endforeach; ?>
+                                        </div>
+                                    <?php endif; ?>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- SEÇÃO: USUÁRIOS -->
+                        <div id="user_section" class="scroll-mt-24 bg-white p-6 rounded-[3rem] border border-slate-200 shadow-sm">
+                            <div class="flex items-center gap-2 mb-6 ml-2">
+                                <div class="w-6 h-6 rounded-lg bg-emerald-50 text-emerald-500 flex items-center justify-center text-[10px]"><i class="fa-solid fa-user-plus"></i></div>
+                                <h4 class="text-sm font-black text-slate-800 tracking-tight">Equipe e Acessos</h4>
+                            </div>
+
+                            <div class="grid grid-cols-1 lg:grid-cols-5 gap-6">
+                                <div class="lg:col-span-2">
+                                    <div class="bg-indigo-900 p-6 rounded-[2rem] text-white shadow-xl relative overflow-hidden">
+                                        <h5 id="user_title" class="text-[8px] font-black text-indigo-300 mb-4 uppercase tracking-widest">Criar Usuário</h5>
+                                        <form method="POST" class="space-y-3">
+                                            <input type="hidden" name="action" value="save_user">
+                                            <input type="hidden" name="id" id="u_id" value="">
+                                            
+                                            <input type="text" name="name" id="u_name" required placeholder="Nome Completo" class="w-full px-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-xs font-bold outline-none focus:bg-white focus:text-slate-900 transition-all">
+                                            <input type="email" name="email" id="u_email" required placeholder="E-mail" class="w-full px-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-xs font-bold outline-none focus:bg-white focus:text-slate-900 transition-all">
+                                            <input type="password" name="password" id="u_pass" required placeholder="Senha" class="w-full px-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-xs font-bold outline-none focus:bg-white focus:text-slate-900 transition-all">
+                                            <input type="text" name="crp" id="u_crp" placeholder="CRP (Opcional)" class="w-full px-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-xs font-bold outline-none focus:bg-white focus:text-slate-900 transition-all">
+                                            
+                                            <div class="pt-1 flex gap-2">
+                                                <button type="submit" class="flex-1 py-3 bg-white text-indigo-900 rounded-xl text-[8px] font-black uppercase tracking-widest hover:scale-[1.02] active:scale-95 transition-all shadow-md italic">Confirmar</button>
+                                                <button type="button" onclick="resetUserForm()" class="px-3 py-3 bg-white/10 text-white rounded-xl hover:bg-white/20 transition-all"><i class="fa-solid fa-xmark"></i></button>
+                                            </div>
+                                        </form>
+                                    </div>
+                                </div>
+                                <div class="lg:col-span-3">
+                                    <div class="space-y-2">
+                                        <?php foreach($all_users as $u): ?>
+                                            <div class="bg-white p-3 px-4 rounded-2xl border border-slate-100 flex items-center justify-between group hover:border-emerald-200 transition-all shadow-sm">
+                                                <div class="flex items-center gap-3">
+                                                    <img src="https://ui-avatars.com/api/?name=<?= urlencode($u['name']) ?>&background=f1f5f9&color=6366f1" class="w-8 h-8 rounded-lg shadow-sm">
+                                                    <div class="min-w-0">
+                                                        <h5 class="font-black text-slate-800 truncate text-[11px]"><?= htmlspecialchars($u['name']) ?></h5>
+                                                        <p class="text-[8px] font-bold text-slate-400 uppercase tracking-widest"><?= htmlspecialchars($u['email']) ?></p>
+                                                    </div>
+                                                </div>
+                                                <div class="flex gap-1.5 opacity-0 group-hover:opacity-100 transition-all">
+                                                    <button onclick='editUser(<?= json_encode($u) ?>)' class="w-7 h-7 flex items-center justify-center bg-slate-50 text-slate-400 rounded-lg hover:bg-slate-900 hover:text-white transition-all text-[10px]"><i class="fa-solid fa-pen"></i></button>
+                                                    <?php if($u['id'] !== $user_id): ?>
+                                                        <form method="POST" onsubmit="return confirm('Excluir?')" class="flex-shrink-0">
+                                                            <input type="hidden" name="action" value="delete_user">
+                                                            <input type="hidden" name="id" value="<?= $u['id'] ?>">
+                                                            <button type="submit" class="w-7 h-7 bg-rose-50 text-rose-400 rounded-lg hover:bg-rose-500 hover:text-white transition-all text-[10px]"><i class="fa-solid fa-trash-can"></i></button>
+                                                        </form>
+                                                    <?php endif; ?>
+                                                </div>
+                                            </div>
+                                        <?php endforeach; ?>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 <?php else: ?>
                     <div class="h-full flex flex-col items-center justify-center opacity-40 py-20">
                         <span class="text-6xl mb-6">🚧</span>
@@ -1332,13 +1671,25 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                     </div>
                     <div class="space-y-2">
                         <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Meio de Recebimento</label>
-                        <select name="method" id="field_method" class="w-full px-5 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none">
+                        <select name="method" id="field_method" class="w-full px-5 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none font-sans">
                             <option value="Pix">PIX (Mais comum)</option>
                             <option value="Cartão">Cartão de Débito/Crédito</option>
                             <option value="Dinheiro">Dinheiro Espécie</option>
                             <option value="TED">Transferência Bancária</option>
                         </select>
                     </div>
+                </div>
+
+                <div class="space-y-2">
+                     <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Categoria / Serviço</label>
+                     <select name="category" id="field_category" onchange="updateValueFromCategory()" class="w-full px-5 py-3.5 bg-indigo-50/50 border border-indigo-100 rounded-2xl text-sm font-black outline-none appearance-none focus:ring-4 focus:ring-indigo-100 transition-all font-sans">
+                        <option value="Geral">📦 Geral / Outros</option>
+                        <optgroup label="Seções e Pacotes">
+                             <?php foreach($session_types as $st): ?>
+                                <option value="<?= htmlspecialchars($st['name']) ?>" data-value="<?= $st['default_value'] ?>"><?= htmlspecialchars($st['name']) ?> (<?= fmtBRL($st['default_value']) ?>)</option>
+                             <?php endforeach; ?>
+                        </optgroup>
+                     </select>
                 </div>
 
                 <!-- Compact Patient/Payer Section -->
@@ -1387,6 +1738,43 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                 <div class="pt-6 border-t border-slate-50 flex justify-end gap-3">
                     <button type="button" onclick="closeModal('txModal')" class="px-6 py-3 rounded-xl text-xs font-bold text-slate-400 hover:bg-slate-50 transition-all">Cancelar</button>
                     <button type="submit" class="px-10 py-3 bg-indigo-600 text-white rounded-xl text-xs font-black uppercase tracking-widest shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition-all active:scale-95">Salvar Registro</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- --- DUPLICATE MONTH MODAL --- -->
+    <div id="duplicateModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[200] hidden items-center justify-center p-4 animate-fade-in">
+        <div class="bg-white w-full max-w-md rounded-[3rem] shadow-2xl overflow-hidden animate-slide-up">
+            <div class="bg-indigo-600 p-8 text-white relative">
+                <div class="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mt-16 blur-2xl"></div>
+                <h3 class="text-2xl font-black tracking-tight mb-2">Duplicar Período</h3>
+                <p class="text-indigo-100 text-xs font-bold uppercase tracking-widest opacity-80">Planejamento Financeiro</p>
+            </div>
+            <form method="POST" class="p-8 space-y-6">
+                <input type="hidden" name="action" value="duplicate_month">
+                <input type="hidden" name="source_month" id="dup_source_month">
+                
+                <div class="space-y-4">
+                    <div class="p-4 bg-indigo-50 rounded-2xl border border-indigo-100">
+                        <p class="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1">Copiando de:</p>
+                        <p id="dup_source_label" class="text-lg font-black text-indigo-900">Mês Selecionado</p>
+                    </div>
+
+                    <div class="space-y-2">
+                        <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Para o Mês de Destino:</label>
+                        <input type="month" name="target_month" id="dup_target_month" required class="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all">
+                    </div>
+
+                    <div class="p-4 bg-amber-50 rounded-2xl border border-amber-100 flex gap-3">
+                        <div class="text-amber-500">⚠️</div>
+                        <p class="text-[11px] font-medium text-amber-700 leading-tight">Todos os lançamentos serão criados como <b>Pendente</b> no mês de destino.</p>
+                    </div>
+                </div>
+
+                <div class="flex gap-3 pt-4">
+                    <button type="button" onclick="closeModal('duplicateModal')" class="flex-1 py-4 bg-slate-100 text-slate-500 rounded-2xl text-[11px] font-black uppercase tracking-widest hover:bg-slate-200 transition-all">Cancelar</button>
+                    <button type="submit" class="flex-[2] py-4 bg-slate-900 text-white rounded-2xl text-[11px] font-black uppercase tracking-widest hover:bg-slate-800 transition-all shadow-xl italic">Confirmar Duplicação</button>
                 </div>
             </form>
         </div>
@@ -1520,6 +1908,8 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
             const btnT = document.getElementById('btnViewTable');
             const btnG = document.getElementById('btnViewGrid');
 
+            if (!table || !grid || !btnT || !btnG) return;
+
             if(view === 'table') {
                 table.classList.remove('hidden');
                 grid.classList.add('hidden');
@@ -1549,6 +1939,7 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
             form.elements['date'].value = t.date;
             form.elements['description'].value = t.description;
             form.elements['amount'].value = t.amount;
+            form.elements['category'].value = t.category;
             form.elements['method'].value = t.method;
             form.elements['payerName'].value = t.payerName;
             form.elements['payerCpf'].value = t.payerCpf || '';
@@ -1601,6 +1992,65 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                 document.getElementById('field_payerName').value = document.getElementById('field_beneficiaryName').value;
                 document.getElementById('field_payerCpf').value = document.getElementById('field_beneficiaryCpf').value;
             }
+        }
+
+        function updateValueFromCategory() {
+            const select = document.getElementById('field_category');
+            const selectedOption = select.options[select.selectedIndex];
+            const defaultValue = selectedOption.getAttribute('data-value');
+            
+            if (defaultValue) {
+                document.getElementById('field_amount').value = defaultValue;
+            }
+        }
+
+        function resetStForm() {
+            document.getElementById('st_id').value = '';
+            document.getElementById('st_name').value = '';
+            document.getElementById('st_value').value = '';
+            document.getElementById('st_title').textContent = 'Configurar Serviço';
+        }
+
+        function editSt(st) {
+            document.getElementById('st_id').value = st.id;
+            document.getElementById('st_name').value = st.name;
+            document.getElementById('st_value').value = st.default_value;
+            document.getElementById('st_title').textContent = 'Editar Serviço';
+            window.scrollTo({ top: document.getElementById('session_section').offsetTop - 100, behavior: 'smooth' });
+        }
+
+        function resetUserForm() {
+            document.getElementById('u_id').value = '';
+            document.getElementById('u_name').value = '';
+            document.getElementById('u_email').value = '';
+            document.getElementById('u_pass').value = '';
+            document.getElementById('u_crp').value = '';
+            document.getElementById('user_title').textContent = 'Criar Novo Usuário';
+        }
+
+        function editUser(u) {
+            document.getElementById('u_id').value = u.id;
+            document.getElementById('u_name').value = u.name;
+            document.getElementById('u_email').value = u.email;
+            document.getElementById('u_pass').value = u.password;
+            document.getElementById('u_crp').value = u.crp || '';
+            document.getElementById('user_title').textContent = 'Editar Usuário';
+            window.scrollTo({ top: document.getElementById('user_section').offsetTop - 100, behavior: 'smooth' });
+        }
+
+        function openDuplicateModal(m, mName) {
+            document.getElementById('dup_source_month').value = m;
+            document.getElementById('dup_source_label').textContent = mName;
+            
+            // Sugerir o próximo mês como default no input date
+            const parts = m.split('-');
+            let year = parseInt(parts[0]);
+            let month = parseInt(parts[1]);
+            month++;
+            if (month > 12) { month = 1; year++; }
+            document.getElementById('dup_target_month').value = `${year}-${String(month).padStart(2, '0')}`;
+            
+            openModal('duplicateModal');
         }
 
         // --- Autocomplete Logic ---

@@ -1,31 +1,21 @@
 ﻿DirectoryIndex index.php
 
-# Protege o banco SQLite (Apache 2.4+)
-<Files "database.sqlite">
-  Require all denied
-</Files>
-
 <IfModule mod_rewrite.c>
   RewriteEngine On
-  
-  # Desabilita MultiViews para evitar conflitos com api.php
-  Options -MultiViews
 
-  # Força HTTPS
-  RewriteCond %{HTTPS} !=on
-  RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+  # RewriteCond %{HTTPS} !=on
+  # RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
 
-  # /api/something -> api.php?path=something
-  RewriteCond %{REQUEST_FILENAME} !-f
-  RewriteCond %{REQUEST_FILENAME} !-d
-  RewriteRule ^api/(.*)$ api.php?path=$1 [L,QSA,NC]
+  # Forçar index.php se o arquivo não existir
+  # RewriteCond %{REQUEST_FILENAME} !-f
+  # RewriteCond %{REQUEST_FILENAME} !-d
+  # RewriteRule ^ index.php [L]
 
-  # /api -> api.php
-  RewriteRule ^api/?$ api.php [L,QSA,NC]
+  RewriteRule ^api/?$ api.php [QSA,L,NC]
+  RewriteRule ^api/(.*)$ api.php?path=$1 [QSA,L,NC]
 
-  # Permite acessar /arquivo em vez de /arquivo.php (fallback)
   RewriteCond %{REQUEST_FILENAME} !-f
   RewriteCond %{REQUEST_FILENAME} !-d
   RewriteCond %{REQUEST_FILENAME}.php -f
-  RewriteRule ^([A-Za-z0-9_-]+)/?$ $1.php [L,QSA]
+  RewriteRule ^([A-Za-z0-9_-]+)/?$ $1.php [QSA,L]
 </IfModule>

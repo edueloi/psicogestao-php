@@ -1,4 +1,8 @@
 <?php
+ob_start();
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+
 // login.php
 require __DIR__ . '/db.php';
 session_start();
@@ -13,14 +17,20 @@ if (!empty($_SESSION['psicogestao_auth']) && $_SESSION['psicogestao_auth'] === t
 
 $error = null;
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-  $user = trim($_POST['username'] ?? '');
+  $user_email = trim($_POST['username'] ?? '');
   $pass = trim($_POST['password'] ?? '');
 
-  // Mesma lógica do api.php
-  if ($user === 'karen.l.s.gomes@gmail.com' && $pass === 'Bibia.0110') {
+  $db = db();
+  $stmt = $db->prepare('SELECT * FROM users WHERE email = ? AND password = ?');
+  $stmt->execute([$user_email, $pass]);
+  $user_data = $stmt->fetch(PDO::FETCH_ASSOC);
+
+  if ($user_data) {
     session_regenerate_id(true);
     $_SESSION['psicogestao_auth'] = true;
-    $_SESSION['psicogestao_user'] = 'karen.l.s.gomes@gmail.com';
+    $_SESSION['psicogestao_id'] = $user_data['id'];
+    $_SESSION['psicogestao_user'] = $user_data['email'];
+    $_SESSION['psicogestao_name'] = $user_data['name'];
     header('Location: index.php');
     exit;
   } else {

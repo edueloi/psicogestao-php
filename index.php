@@ -10,6 +10,8 @@ ini_set('display_errors', 1);
 require_once __DIR__ . '/db.php';
 session_start();
 
+$is_mysql = (DB_TYPE === 'mysql');
+
 // 1. Segurança e Autenticação
 if (isset($_GET['logout'])) {
     $_SESSION = [];
@@ -152,6 +154,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($action === 'delete_user') {
         $id = $_POST['id'];
+        // Apenas o usuário Karen ou o próprio usuário (com restrições) poderiam deletar, 
+        // mas por enquanto vamos restringir para que um usuário não delete outros se não for admin.
+        // Como não temos ROLE, vamos permitir apenas que não delete a si mesmo por engano aqui.
         if ($id === $user_id) {
             $_SESSION['message'] = "❌ Você não pode excluir a si mesmo!";
         } else {
@@ -164,16 +169,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($action === 'delete_session_type') {
         $id = $_POST['id'];
-        $stmt = $pdo->prepare('DELETE FROM session_types WHERE id = ?');
-        $stmt->execute([$id]);
+        $stmt = $pdo->prepare('DELETE FROM session_types WHERE id = ? AND userId = ?');
+        $stmt->execute([$id, $user_id]);
         $_SESSION['message'] = "🗑️ Tipo de sessão removido!";
         header('Location: index.php?tab=settings'); exit;
     }
 
     if ($action === 'receipt') {
         $id = $_POST['id'] ?? '';
-        $stmt = $pdo->prepare('UPDATE transactions SET receiptStatus = "ISSUED" WHERE id = ?');
-        $stmt->execute([$id]);
+        $stmt = $pdo->prepare('UPDATE transactions SET receiptStatus = "ISSUED" WHERE id = ? AND userId = ?');
+        $stmt->execute([$id, $user_id]);
         $message = "🧾 Recibo emitido com sucesso!";
     }
 
@@ -322,9 +327,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($action === 'clear_all') {
-        $stmt = $pdo->prepare('DELETE FROM transactions');
-        $stmt->execute();
-        $_SESSION['message'] = "🗑️ Banco de dados resetado!";
+        $stmt = $pdo->prepare('DELETE FROM transactions WHERE userId = ?');
+        $stmt->execute([$user_id]);
+        $_SESSION['message'] = "🗑️ Seus lançamentos foram resetados!";
         header("Location: index.php?tab=cashbook"); exit;
     }
 
@@ -336,7 +341,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'delete_month') {
         $m = $_POST['month_val'] ?? ''; // YYYY-MM
         if ($m) {
-            $stmt = $pdo->prepare('DELETE FROM transactions WHERE strftime("%Y-%m", date) = ? AND userId = ?');
+            $sql_del = $is_mysql 
+                ? "DELETE FROM transactions WHERE DATE_FORMAT(date, '%Y-%m') = ? AND userId = ?"
+                : "DELETE FROM transactions WHERE strftime('%Y-%m', date) = ? AND userId = ?";
+            $stmt = $pdo->prepare($sql_del);
             $stmt->execute([$m, $user_id]);
             $_SESSION['message'] = "🗑️ Todos os lançamentos de " . getMonthName($m) . " foram excluídos!";
         }
@@ -348,7 +356,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $target_m = $_POST['target_month'] ?? ''; // YYYY-MM
         
         if ($source_m && $target_m) {
-            $stmt = $pdo->prepare('SELECT * FROM transactions WHERE strftime("%Y-%m", date) = ?');
+            $sql_dup = $is_mysql 
+                ? 'SELECT * FROM transactions WHERE DATE_FORMAT(date, "%Y-%m") = ?' 
+                : 'SELECT * FROM transactions WHERE strftime("%Y-%m", date) = ?';
+            $stmt = $pdo->prepare($sql_dup);
             $stmt->execute([$source_m]);
             $to_dup = $stmt->fetchAll(PDO::FETCH_ASSOC);
             $count = 0;
@@ -411,11 +422,15 @@ $where_dash = []; $params_dash = [];
 
 // Dashboard Totals
 if ($dash_month !== 'all') {
-    $where_dash[] = "strftime('%m', date) = ? AND strftime('%Y', date) = ?";
+    if ($is_mysql) {
+        $where_dash[] = "MONTH(date) = ? AND YEAR(date) = ?";
+    } else {
+        $where_dash[] = "strftime('%m', date) = ? AND strftime('%Y', date) = ?";
+    }
     $params_dash[] = str_pad($dash_month, 2, '0', STR_PAD_LEFT);
     $params_dash[] = $dash_year;
 } else {
-    $where_dash[] = "strftime('%Y', date) = ?";
+    $where_dash[] = $is_mysql ? "YEAR(date) = ?" : "strftime('%Y', date) = ?";
     $params_dash[] = $dash_year;
 }
 
@@ -429,19 +444,24 @@ $totals_dashboard = calcTotals($stmt->fetchAll(PDO::FETCH_ASSOC));
 $prev_month_ts = strtotime(($dash_month === 'all' ? $dash_year : "$dash_year-$dash_month-01") . " -1 month");
 $pm = date('m', $prev_month_ts);
 $py = date('Y', $prev_month_ts);
-$stmt = $pdo->prepare("SELECT * FROM transactions WHERE strftime('%m', date) = ? AND strftime('%Y', date) = ? AND userId = ?");
+$sql_prev = $is_mysql 
+    ? "SELECT * FROM transactions WHERE MONTH(date) = ? AND YEAR(date) = ? AND userId = ?"
+    : "SELECT * FROM transactions WHERE strftime('%m', date) = ? AND strftime('%Y', date) = ? AND userId = ?";
+$stmt = $pdo->prepare($sql_prev);
 $stmt->execute([$pm, $py, $user_id]);
 $totals_prev = calcTotals($stmt->fetchAll(PDO::FETCH_ASSOC));
 
 // Cashbook Filters
+$sql_date_part = $is_mysql ? "DATE_FORMAT(date, '%Y-%m')" : "strftime('%Y-%m', date)";
+
 if ($filter_month === 'current') {
-    $where[] = "strftime('%Y-%m', date) = ?";
+    $where[] = "$sql_date_part = ?";
     $params[] = date('Y-m');
 } elseif ($filter_month === 'last') {
-    $where[] = "strftime('%Y-%m', date) = ?";
+    $where[] = "$sql_date_part = ?";
     $params[] = date('Y-m', strtotime('-1 month'));
 } elseif (preg_match('/^\d{4}-\d{2}$/', $filter_month)) {
-    $where[] = "strftime('%Y-%m', date) = ?";
+    $where[] = "$sql_date_part = ?";
     $params[] = $filter_month;
 }
 
@@ -456,14 +476,16 @@ if ($filter_search !== '') {
     $params[] = $like; $params[] = $like; $params[] = $like;
 }
 
-$sql_all = "SELECT * FROM transactions WHERE userId = ? ORDER BY date DESC, rowid DESC";
+$sql_sort = $is_mysql ? "ORDER BY date DESC, internal_id DESC" : "ORDER BY date DESC, rowid DESC";
+
+$sql_all = "SELECT * FROM transactions WHERE userId = ? $sql_sort";
 $all_tx = $pdo->prepare($sql_all);
 $all_tx->execute([$user_id]);
 $all_tx = $all_tx->fetchAll(PDO::FETCH_ASSOC);
 
 $sql_filtered = "SELECT * FROM transactions WHERE userId = ?";
 if ($where) $sql_filtered .= " AND " . implode(" AND ", $where);
-$sql_filtered .= " ORDER BY date DESC, rowid DESC";
+$sql_filtered .= " $sql_sort";
 $stmt = $pdo->prepare($sql_filtered);
 $stmt->execute(array_merge([$user_id], $params));
 $filtered_tx = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -495,11 +517,17 @@ function calcTotals($list) {
 }
 
 // 5. Agrupamento por Anos e Meses para a Vista de Archive
-$stmt = $pdo->query('SELECT DISTINCT strftime("%Y", date) as y FROM transactions ORDER BY y DESC');
+$sql_years = $is_mysql 
+    ? 'SELECT DISTINCT YEAR(date) as y FROM transactions ORDER BY y DESC' 
+    : 'SELECT DISTINCT strftime("%Y", date) as y FROM transactions ORDER BY y DESC';
+$stmt = $pdo->query($sql_years);
 $available_years = $stmt->fetchAll(PDO::FETCH_COLUMN);
 if(empty($available_years)) $available_years[] = date('Y');
 
-$stmt = $pdo->prepare('SELECT DISTINCT strftime("%Y-%m", date) as month FROM transactions WHERE strftime("%Y", date) = ? ORDER BY month DESC');
+$sql_months = $is_mysql 
+    ? 'SELECT DISTINCT DATE_FORMAT(date, "%Y-%m") as month FROM transactions WHERE YEAR(date) = ? ORDER BY month DESC'
+    : 'SELECT DISTINCT strftime("%Y-%m", date) as month FROM transactions WHERE strftime("%Y", date) = ? ORDER BY month DESC';
+$stmt = $pdo->prepare($sql_months);
 $stmt->execute([$filter_year]);
 $available_months = $stmt->fetchAll(PDO::FETCH_COLUMN);
 if(empty($available_months) && $filter_year == date('Y')) $available_months[] = date('Y-m');
@@ -507,7 +535,10 @@ if(empty($available_months) && $filter_year == date('Y')) $available_months[] = 
 $monthly_summaries = [];
 foreach($available_months as $m) {
     if (!$m) continue;
-    $stmt = $pdo->prepare('SELECT * FROM transactions WHERE strftime("%Y-%m", date) = ?');
+    $sql_month_sum = $is_mysql 
+        ? 'SELECT * FROM transactions WHERE DATE_FORMAT(date, "%Y-%m") = ?'
+        : 'SELECT * FROM transactions WHERE strftime("%Y-%m", date) = ?';
+    $stmt = $pdo->prepare($sql_month_sum);
     $stmt->execute([$m]);
     $monthly_summaries[$m] = calcTotals($stmt->fetchAll(PDO::FETCH_ASSOC));
 }

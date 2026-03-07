@@ -5,6 +5,9 @@ require __DIR__ . '/db.php';
 session_start();
 header('Content-Type: application/json; charset=utf-8');
 
+$is_mysql = (defined('DB_TYPE') && DB_TYPE === 'mysql');
+$user_id = $_SESSION['psicogestao_id'] ?? null;
+
 const AUTH_USER = 'karen.l.s.gomes@gmail.com';
 const AUTH_PASS = 'Bibia.0110';
 
@@ -139,15 +142,18 @@ try {
   requireAuth();
 
   if ($path === 'transactions' && $method === 'GET') {
-    $stmt = $pdo->query('SELECT * FROM transactions ORDER BY date DESC, rowid DESC');
+    $sql_sort = $is_mysql ? "ORDER BY date DESC, internal_id DESC" : "ORDER BY date DESC, rowid DESC";
+    $stmt = $pdo->prepare("SELECT * FROM transactions WHERE userId = ? $sql_sort");
+    $stmt->execute([$user_id]);
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
     sendJson(array_map('mapTxRow', $rows));
   }
 
   if ($path === 'transactions' && $method === 'POST') {
     $payload = normalizeTxInput(readJsonBody());
+    $payload['userId'] = $user_id;
 
-    $stmt = $pdo->prepare('INSERT INTO transactions (id, date, description, payerName, beneficiaryName, amount, type, category, method, status, receiptStatus, payerCpf, beneficiaryCpf, observation, tags) VALUES (:id, :date, :description, :payerName, :beneficiaryName, :amount, :type, :category, :method, :status, :receiptStatus, :payerCpf, :beneficiaryCpf, :observation, :tags)');
+    $stmt = $pdo->prepare('INSERT INTO transactions (id, userId, date, description, payerName, beneficiaryName, amount, type, category, method, status, receiptStatus, payerCpf, beneficiaryCpf, observation, tags) VALUES (:id, :userId, :date, :description, :payerName, :beneficiaryName, :amount, :type, :category, :method, :status, :receiptStatus, :payerCpf, :beneficiaryCpf, :observation, :tags)');
     $stmt->execute($payload);
 
     sendJson(['ok' => true, 'id' => $payload['id']], 201);
@@ -158,8 +164,9 @@ try {
 
     $payload = normalizeTxInput(readJsonBody());
     $payload['id'] = (string) $id;
+    $payload['userId'] = $user_id;
 
-    $stmt = $pdo->prepare('UPDATE transactions SET date=:date, description=:description, payerName=:payerName, beneficiaryName=:beneficiaryName, amount=:amount, type=:type, category=:category, method=:method, status=:status, receiptStatus=:receiptStatus, payerCpf=:payerCpf, beneficiaryCpf=:beneficiaryCpf, observation=:observation, tags=:tags WHERE id=:id');
+    $stmt = $pdo->prepare('UPDATE transactions SET date=:date, description=:description, payerName=:payerName, beneficiaryName=:beneficiaryName, amount=:amount, type=:type, category=:category, method=:method, status=:status, receiptStatus=:receiptStatus, payerCpf=:payerCpf, beneficiaryCpf=:beneficiaryCpf, observation=:observation, tags=:tags WHERE id=:id AND userId=:userId');
     $stmt->execute($payload);
 
     sendJson(['ok' => true]);
@@ -167,8 +174,8 @@ try {
 
   if ($path === 'transactions' && $method === 'DELETE') {
     if (!$id) sendJson(['error' => 'ID obrigatorio'], 400);
-    $stmt = $pdo->prepare('DELETE FROM transactions WHERE id = :id');
-    $stmt->execute(['id' => (string) $id]);
+    $stmt = $pdo->prepare('DELETE FROM transactions WHERE id = :id AND userId = :userId');
+    $stmt->execute(['id' => (string) $id, 'userId' => $user_id]);
     sendJson(['ok' => true]);
   }
 
@@ -212,8 +219,8 @@ try {
   if ($path === 'transactions/receipt' && $method === 'POST') {
     if (!$id) sendJson(['error' => 'ID obrigatorio'], 400);
 
-    $stmt = $pdo->prepare('UPDATE transactions SET receiptStatus = :receiptStatus WHERE id = :id');
-    $stmt->execute(['receiptStatus' => 'ISSUED', 'id' => (string) $id]);
+    $stmt = $pdo->prepare('UPDATE transactions SET receiptStatus = :receiptStatus WHERE id = :id AND userId = :userId');
+    $stmt->execute(['receiptStatus' => 'ISSUED', 'id' => (string) $id, 'userId' => $user_id]);
     sendJson(['ok' => true]);
   }
 

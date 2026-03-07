@@ -1,19 +1,26 @@
 <?php
+require_once __DIR__ . '/config.php';
+
 function db() {
-  static $pdo = null;
-  if ($pdo) return $pdo;
+    static $pdo = null;
+    if ($pdo) return $pdo;
 
-  // Em produção (HostGator),dirname(__DIR__) sobe um nível acima da pasta pública
-  // No localhost, sobe um nível acima da pasta atual
-  $path = dirname(__DIR__) . '/database_psicogestao.sqlite';
-  
-  // Fallback se não existir no nível superior (para o primeiro acesso local)
-  if (!file_exists($path)) {
-      $path = __DIR__ . '/database.sqlite';
-  }
-
-  $pdo = new PDO('sqlite:' . $path);
-  $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-  $pdo->exec("PRAGMA foreign_keys = ON;");
-  return $pdo;
+    try {
+        if (DB_TYPE === 'mysql') {
+            $dsn = "mysql:host=" . DB_HOST . ";dbname=" . DB_NAME . ";charset=utf8mb4";
+            $pdo = new PDO($dsn, DB_USER, DB_PASS);
+        } else {
+            $pdo = new PDO('sqlite:' . DB_SQLITE_PATH);
+            $pdo->exec("PRAGMA foreign_keys = ON;");
+        }
+        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+    } catch (PDOException $e) {
+        // Removi o fallback silencioso para SQLite em caso de erro no MySQL.
+        // Assim, se o MySQL falhar na HostGator, veremos o erro real de conexão.
+        header('Content-Type: text/plain; charset=utf-8');
+        die("❌ Erro Crítico de Conexão: " . $e->getMessage() . "\n\nVerifique se o usuário do banco tem permissão de acesso e se a senha está correta no cPanel.");
+    }
+    
+    return $pdo;
 }

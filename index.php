@@ -26,9 +26,9 @@ $user_email = $_SESSION['psicogestao_user'] ?? 'karen.l.s.gomes@gmail.com';
 $TAB_SLUGS = [
     'dashboard' => 'Dashboard',
     'cashbook' => 'Livro Caixa',
-    'reports' => 'Relatórios',
+    'pacientes' => 'Pacientes',
+    'reports' => 'AI Insights',
     'provisions' => 'Fiscal',
-    'bi' => 'Análise BI'
 ];
 
 $active_tab = $_GET['tab'] ?? 'dashboard';
@@ -397,6 +397,55 @@ foreach($available_months as $m) {
 $totals_all = calcTotals($all_tx);
 $totals_filtered = calcTotals($filtered_tx);
 
+$pacientes = [];
+foreach($all_tx as $tx) {
+    if ($tx['type'] === 'INCOME' && !empty($tx['beneficiaryName'])) {
+        $key = trim($tx['beneficiaryName']) . '|' . trim($tx['beneficiaryCpf']);
+        if (!isset($pacientes[$key])) {
+            $pacientes[$key] = [
+                'nome' => trim($tx['beneficiaryName']),
+                'cpf' => trim($tx['beneficiaryCpf']),
+                'total_gasto' => 0,
+                'ult_sessao' => $tx['date'],
+                'sessões' => 0,
+                'payerName' => trim($tx['payerName']),
+                'payerCpf' => trim($tx['payerCpf'])
+            ];
+        }
+        $pacientes[$key]['total_gasto'] += (float)$tx['amount'];
+        $pacientes[$key]['sessões']++;
+        if (strtotime($tx['date']) > strtotime($pacientes[$key]['ult_sessao'])) {
+            $pacientes[$key]['ult_sessao'] = $tx['date'];
+        }
+    }
+}
+$pacientes_list_js = array_values($pacientes); // For JSON export
+
+// Filtros e Ordenação de Pacientes
+$p_search = $_GET['p_search'] ?? '';
+$p_sort = $_GET['p_sort'] ?? 'nome';
+
+if ($p_search !== '') {
+    $pacientes = array_filter($pacientes, function($p) use ($p_search) {
+        return stripos($p['nome'], $p_search) !== false || stripos($p['cpf'], $p_search) !== false;
+    });
+}
+
+usort($pacientes, function($a, $b) use ($p_sort) {
+    if ($p_sort === 'valor') return $b['total_gasto'] <=> $a['total_gasto'];
+    if ($p_sort === 'sessoes') return $b['sessões'] <=> $a['sessões'];
+    if ($p_sort === 'recente') return strtotime($b['ult_sessao']) <=> strtotime($a['ult_sessao']);
+    return strcmp($a['nome'], $b['nome']);
+});
+
+$top_p_data = ['Nenhum', 0];
+foreach($pacientes as $p) {
+    if($p['total_gasto'] > $top_p_data[1]) {
+        $top_p_data = [$p['nome'], $p['total_gasto']];
+    }
+}
+$top_paciente = $top_p_data;
+
 // Helpers de formatação
 function fmtBRL($val) { return 'R$ ' . number_format($val, 2, ',', '.'); }
 function fmtDateBR($iso) { return date('d/m/Y', strtotime($iso)); }
@@ -405,8 +454,17 @@ $mon_names = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Ago
 
 function getMonthName($m) {
     global $mon_names;
+    if ($m === 'all') return 'Todos os Lançamentos';
+    if ($m === 'archive') return 'Arquivo Geral';
+    if ($m === 'current') return 'Mês Atual';
+    if ($m === 'last') return 'Mês Anterior';
+    
     $parts = explode('-', $m);
-    return $mon_names[(int)$parts[1]-1] . ' ' . $parts[0];
+    if (count($parts) < 2) return $m;
+    
+    $idx = (int)$parts[1] - 1;
+    $name = (isset($mon_names[$idx])) ? $mon_names[$idx] : 'Mês ' . $parts[1];
+    return $name . ' ' . $parts[0];
 }
 
 $view_mode = $_GET['month'] ?? 'archive'; // 'archive' ou YYYY-MM
@@ -435,14 +493,22 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
         .scrollbar-hide::-webkit-scrollbar { display: none; }
         .animate-fade-in { animation: fadeIn 0.4s ease-out; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        
+        @media (max-width: 1024px) {
+            .sidebar-closed { transform: translateX(-100%); }
+            .sidebar-open { transform: translateX(0); }
+        }
     </style>
 </head>
-<body class="text-slate-900 overflow-hidden">
+<body class="text-slate-900 overflow-x-hidden">
     
-    <div class="flex h-screen overflow-hidden">
+    <div class="flex h-screen overflow-hidden relative">
         
         <!-- Sidebar -->
-        <aside class="w-72 bg-white border-r border-slate-200 flex flex-col shrink-0 z-50">
+        <aside id="mainSidebar" class="w-72 bg-white border-r border-slate-200 flex flex-col shrink-0 z-[60] fixed lg:relative h-full transition-transform duration-300 sidebar-closed lg:translate-x-0">
+            <button onclick="toggleSidebar()" class="lg:hidden absolute top-6 right-[-50px] w-10 h-10 bg-indigo-600 text-white rounded-xl shadow-xl flex items-center justify-center">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
             <div class="p-8 border-b border-slate-100 flex items-center gap-3">
                 <div class="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white text-xl shadow-lg ring-4 ring-indigo-50">Ψ</div>
                 <div>
@@ -464,6 +530,12 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                     <span class="w-5 text-center relative z-10"><i class="fa-solid fa-book-medical"></i></span>
                     <span class="text-[13px] font-bold relative z-10">Livro Caixa</span>
                     <?php if($active_tab=='cashbook'): ?> <div class="absolute inset-0 bg-gradient-to-r from-indigo-600 to-indigo-700 opacity-100"></div> <?php endif; ?>
+                </a>
+
+                <a href="?tab=pacientes" class="flex items-center gap-3.5 px-5 py-3 rounded-2xl transition-all group relative overflow-hidden <?= $active_tab=='pacientes' ? 'sidebar-item-active text-white' : 'text-slate-500 hover:bg-slate-50 hover:text-indigo-600' ?>">
+                    <span class="w-5 text-center relative z-10"><i class="fa-solid fa-user-group"></i></span>
+                    <span class="text-[13px] font-bold relative z-10">Pacientes</span>
+                    <?php if($active_tab=='pacientes'): ?> <div class="absolute inset-0 bg-gradient-to-r from-indigo-600 to-indigo-700 opacity-100"></div> <?php endif; ?>
                 </a>
 
                 <a href="?tab=reports" class="flex items-center gap-3.5 px-5 py-3 rounded-2xl transition-all group relative overflow-hidden <?= $active_tab=='reports' ? 'sidebar-item-active text-white' : 'text-slate-500 hover:bg-slate-50 hover:text-indigo-600' ?>">
@@ -502,10 +574,12 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                 <?php 
                 $sidebar_status_label = 'Status Geral';
                 if ($active_tab === 'dashboard' && $dash_month !== 'all') {
-                    $sidebar_status_label = 'Status de ' . $mon_names[(int)$dash_month-1];
+                    $m_idx = (int)$dash_month - 1;
+                    $m_name = (isset($mon_names[$m_idx])) ? $mon_names[$m_idx] : $dash_month;
+                    $sidebar_status_label = 'Status de ' . $m_name;
                 } elseif ($active_tab === 'cashbook' && preg_match('/^\d{4}-\d{2}$/', $filter_month)) {
                     $sidebar_status_label = 'Status de ' . getMonthName($filter_month);
-                } elseif ($active_tab === 'cashbook' && $filter_month === 'current') {
+                } elseif ($active_tab === 'cashbook' && ($filter_month === 'current' || $view_mode === 'current')) {
                     $sidebar_status_label = 'Status do Mês';
                 }
                 
@@ -528,16 +602,19 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
         <main class="flex-1 flex flex-col min-w-0">
             
             <!-- Top Bar -->
-            <header class="h-20 bg-white/80 backdrop-blur-md border-b border-slate-200 flex items-center justify-between px-10 sticky top-0 z-40">
+            <header class="h-20 bg-white/80 backdrop-blur-md border-b border-slate-200 flex items-center justify-between px-4 lg:px-10 sticky top-0 z-40">
                 <div class="flex items-center gap-4">
+                    <button onclick="toggleSidebar()" class="lg:hidden w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center text-slate-500">
+                        <i class="fa-solid fa-bars-staggered"></i>
+                    </button>
                     <h2 class="text-lg font-extrabold text-slate-800 tracking-tight"><?= $TAB_SLUGS[$active_tab] ?></h2>
                 </div>
 
                 <div class="flex items-center gap-6">
                     <div class="h-6 w-px bg-slate-200"></div>
                     <div class="flex items-center gap-3">
-                        <div class="relative group">
-                            <button class="flex items-center gap-3 px-3 py-2 rounded-2xl hover:bg-slate-50 transition-all group">
+                        <div class="relative">
+                            <button onclick="toggleProfileMenu(event)" class="flex items-center gap-3 px-3 py-2 rounded-2xl hover:bg-slate-50 transition-all group">
                                 <div class="text-right hidden sm:block">
                                     <p class="text-[11px] font-black text-slate-900 leading-none">Karen Gomes</p>
                                     <p class="text-[9px] text-emerald-500 font-bold uppercase mt-1 tracking-widest text-right">Psicóloga Online</p>
@@ -546,26 +623,14 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                             </button>
                             
                             <!-- Dropdown Menu -->
-                            <div class="absolute right-0 mt-2 w-64 bg-white rounded-[2rem] shadow-2xl border border-slate-100 py-3 hidden group-hover:block z-50 animate-fade-in origin-top-right">
+                            <div id="profileDropdown" class="absolute right-0 mt-2 w-56 bg-white rounded-[2rem] shadow-2xl border border-slate-100 py-3 hidden z-50 animate-fade-in origin-top-right">
                                 <div class="px-6 py-4 border-b border-slate-50">
                                     <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Conta Ativa</p>
-                                    <p class="text-xs font-bold text-slate-800 truncate"><?= $user_email ?></p>
+                                    <p class="text-[9px] font-bold text-slate-800 truncate"><?= $user_email ?></p>
                                 </div>
                                 
-                                <div class="py-2">
-                                    <a href="#" class="flex items-center gap-3 px-6 py-3 text-[11px] font-bold text-slate-600 hover:bg-slate-50 hover:text-indigo-600 transition-all uppercase tracking-wider">
-                                        <span class="text-sm">👤</span> Meu Perfil
-                                    </a>
-                                    <a href="#" class="flex items-center gap-3 px-6 py-3 text-[11px] font-bold text-slate-600 hover:bg-slate-50 hover:text-indigo-600 transition-all uppercase tracking-wider">
-                                        <span class="text-sm">⚙️</span> Configurações
-                                    </a>
-                                    <a href="#" class="flex items-center gap-3 px-6 py-3 text-[11px] font-bold text-slate-600 hover:bg-slate-50 hover:text-indigo-600 transition-all uppercase tracking-wider">
-                                        <span class="text-sm">🎧</span> Suporte VIP
-                                    </a>
-                                </div>
-
-                                <div class="mt-2 pt-2 border-t border-slate-50">
-                                    <a href="?logout=1" class="flex items-center gap-3 px-6 py-3 text-[11px] font-black text-rose-500 hover:bg-rose-50 transition-all uppercase tracking-widest">
+                                <div class="p-2">
+                                    <a href="?logout=1" class="flex items-center gap-3 px-4 py-3 rounded-xl text-[11px] font-black text-rose-500 hover:bg-rose-50 transition-all uppercase tracking-widest">
                                         <i class="fa-solid fa-right-from-bracket"></i> Sair do Sistema
                                     </a>
                                 </div>
@@ -576,7 +641,7 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
             </header>
 
             <!-- Page Container -->
-            <div class="flex-1 overflow-y-auto p-8 animate-fade-in custom-scrollbar">
+            <div class="flex-1 overflow-y-auto p-4 lg:p-8 animate-fade-in custom-scrollbar">
                 
                 <?php if ($active_tab === 'dashboard'): ?>
                     <div class="max-w-7xl mx-auto space-y-8 pb-12">
@@ -607,7 +672,7 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                             </form>
                         </div>
 
-                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6">
                             <?php 
                             $diff = $totals_dashboard['liquid'] - $totals_prev['liquid'];
                             $diff_pct = $totals_prev['liquid'] > 0 ? ($diff / $totals_prev['liquid']) * 100 : 0;
@@ -726,7 +791,7 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                                     <button onclick="openModal('txModal')" class="px-8 py-3 bg-indigo-600 text-white rounded-2xl text-[11px] font-black uppercase tracking-widest shadow-lg shadow-indigo-100">Criar Primeiro Lançamento</button>
                                 </div>
                             <?php else: ?>
-                                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 lg:gap-8">
                                     <?php foreach($monthly_summaries as $m => $summary): ?>
                                         <div class="bg-white rounded-[3rem] border border-slate-200 p-10 shadow-sm hover:shadow-2xl transition-all group overflow-hidden relative active:scale-[0.98]">
                                         <div class="absolute top-0 right-0 w-32 h-32 bg-indigo-50 rounded-full -mr-16 -mt-16 blur-3xl opacity-50 group-hover:bg-indigo-100 transition-all"></div>
@@ -771,7 +836,15 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                                     <a href="?tab=cashbook&month=archive" class="w-10 h-10 bg-white border border-slate-200 rounded-xl flex items-center justify-center text-slate-400 hover:bg-slate-50 transition-all shadow-sm">←</a>
                                     <div>
                                         <h3 class="text-2xl font-black text-slate-900 tracking-tight"><?= getMonthName($_GET['month']) ?></h3>
-                                        <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Painel de Detalhamento</p>
+                                        <div class="flex items-center gap-2 mt-1">
+                                            <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest whitespace-nowrap">Painel de Detalhamento</p>
+                                            <?php if($filter_search): ?>
+                                                <span class="px-2.5 py-1 bg-indigo-50 text-indigo-600 rounded-lg text-[9px] font-black uppercase tracking-widest border border-indigo-100 flex items-center gap-1.5 shadow-sm">
+                                                    <i class="fa-solid fa-user-check text-[8px]"></i>
+                                                    <?= count($filtered_tx) ?> Sessões / Registros (<?= fmtBRL($totals_filtered['income']) ?>)
+                                                </span>
+                                            <?php endif; ?>
+                                        </div>
                                     </div>
                                 </div>
                                 <div class="flex gap-2">
@@ -783,7 +856,7 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                             </div>
 
                             <!-- KPIs Topo -->
-                            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 lg:gap-6">
                                 <div class="bg-white p-6 rounded-[2.5rem] border border-slate-200 shadow-sm flex items-center gap-5 group hover:shadow-lg transition-all">
                                     <div class="w-12 h-12 bg-emerald-50 text-emerald-500 rounded-2xl flex items-center justify-center text-xl shadow-inner group-hover:scale-110 transition-transform"><i class="fa-solid fa-arrow-trend-up"></i></div>
                                     <div>
@@ -808,16 +881,16 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                             </div>
 
                             <!-- Barra de Ações Central -->
-                            <div class="bg-white p-4 rounded-[2.5rem] border border-slate-200 shadow-sm flex flex-wrap items-center justify-between gap-4">
-                                <div class="flex items-center gap-3">
-                                    <button onclick="triggerConfirm('Fechar Mês', 'Fechar lançamentos deste mês?', 'close_month')" class="h-11 px-5 bg-emerald-500 text-white rounded-2xl text-[11px] font-black uppercase tracking-widest hover:bg-emerald-600 transition-all shadow-md shadow-emerald-50">Encerrar Período</button>
+                            <div class="bg-white p-4 rounded-[2.5rem] border border-slate-200 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4">
+                                <div class="flex items-center gap-3 w-full sm:w-auto">
+                                    <button onclick="triggerConfirm('Fechar Mês', 'Fechar lançamentos deste mês?', 'close_month')" class="w-full sm:w-auto h-11 px-5 bg-emerald-500 text-white rounded-2xl text-[11px] font-black uppercase tracking-widest hover:bg-emerald-600 transition-all shadow-md shadow-emerald-50">Encerrar Período</button>
                                 </div>
-                                <div class="flex items-center gap-2">
-                                    <button onclick="openModal('importModal')" class="h-11 px-5 bg-indigo-50 text-indigo-600 rounded-2xl border border-indigo-100 hover:bg-indigo-100 transition-all text-[11px] font-black uppercase tracking-widest flex items-center gap-2">
-                                        <i class="fa-solid fa-file-import"></i> Importar Dados
+                                <div class="flex flex-col sm:flex-row items-center gap-2 w-full sm:w-auto">
+                                    <button onclick="openModal('importModal')" class="w-full sm:w-auto h-11 px-5 bg-indigo-50 text-indigo-600 rounded-2xl border border-indigo-100 hover:bg-indigo-100 transition-all text-[11px] font-black uppercase tracking-widest flex items-center justify-center gap-2">
+                                        <i class="fa-solid fa-file-import"></i> Importar
                                     </button>
-                                    <button onclick="openModal('txModal')" class="h-11 px-6 bg-slate-900 text-white rounded-2xl text-[11px] font-black uppercase tracking-widest shadow-lg hover:bg-slate-800 transition-all flex items-center gap-2">
-                                        <i class="fa-solid fa-plus"></i> Novo Lançamento
+                                    <button onclick="openModal('txModal')" class="w-full sm:w-auto h-11 px-8 bg-indigo-600 text-white rounded-2xl text-[11px] font-black uppercase tracking-widest shadow-xl shadow-indigo-100 hover:bg-indigo-700 transition-all flex items-center justify-center gap-2">
+                                        <i class="fa-solid fa-plus"></i> Novo
                                     </button>
                                 </div>
                             </div>
@@ -849,12 +922,12 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                                     <table class="w-full text-left">
                                         <thead>
                                             <tr class="bg-slate-50 border-b border-slate-100">
-                                                <th class="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Data</th>
-                                                <th class="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Descrição & Categoria</th>
-                                                <th class="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Paciente / Pagador</th>
-                                                <th class="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Valor</th>
-                                                <th class="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Status</th>
-                                                <th class="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Ações</th>
+                                                <th class="px-4 lg:px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap">Data</th>
+                                                <th class="px-4 lg:px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap">Descrição</th>
+                                                <th class="hidden lg:table-cell px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap">Paciente / Pagador</th>
+                                                <th class="px-4 lg:px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right whitespace-nowrap">Valor</th>
+                                                <th class="hidden md:table-cell px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center whitespace-nowrap">Status</th>
+                                                <th class="px-4 lg:px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right whitespace-nowrap">Ações</th>
                                             </tr>
                                         </thead>
                                         <tbody class="divide-y divide-slate-50">
@@ -866,14 +939,15 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                                                 $amt_color = $is_income ? 'text-emerald-600' : 'text-rose-600';
                                                 ?>
                                                 <tr class="hover:bg-slate-50/50 transition-all">
-                                                    <td class="px-8 py-6 text-sm text-slate-500 font-bold"><?= fmtDateBR($t['date']) ?></td>
-                                                    <td class="px-8 py-6">
+                                                    <td class="px-4 lg:px-8 py-6 text-sm text-slate-500 font-bold"><?= fmtDateBR($t['date']) ?></td>
+                                                    <td class="px-4 lg:px-8 py-6">
                                                         <p class="text-sm font-black text-slate-900"><?= htmlspecialchars($t['description']) ?></p>
-                                                        <div class="flex gap-2 mt-1.5">
-                                                            <span class="text-[9px] font-black px-2 py-0.5 rounded bg-slate-100 text-slate-500 uppercase"><?= htmlspecialchars($t['method']) ?></span>
-                                                            <span class="text-[9px] font-black px-2 py-0.5 rounded bg-indigo-50 text-indigo-500 uppercase"><?= htmlspecialchars($t['category']) ?></span>
+                                                        <div class="flex flex-wrap gap-2 mt-1.5">
+                                                            <span class="text-[8px] lg:text-[9px] font-black px-2 py-0.5 rounded bg-slate-100 text-slate-500 uppercase"><?= htmlspecialchars($t['method']) ?></span>
+                                                            <span class="text-[8px] lg:text-[9px] font-black px-2 py-0.5 rounded bg-indigo-50 text-indigo-500 uppercase"><?= htmlspecialchars($t['category']) ?></span>
                                                         </div>
                                                     </td>
+                                                    <td class="hidden lg:table-cell px-8 py-6">
                                                     <td class="px-8 py-6">
                                                         <div class="space-y-1">
                                                             <div class="flex items-center gap-2">
@@ -893,10 +967,10 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                                                             <?php endif; ?>
                                                         </div>
                                                     </td>
-                                                    <td class="px-8 py-6 text-right whitespace-nowrap">
-                                                        <p class="text-lg font-black <?= $amt_color ?>"><?= $is_income ? '+' : '-' ?> <?= fmtBRL($t['amount']) ?></p>
+                                                    <td class="px-4 lg:px-8 py-6 text-right whitespace-nowrap">
+                                                        <p class="text-base lg:text-lg font-black <?= $amt_color ?>"><?= $is_income ? '+' : '-' ?> <?= fmtBRL($t['amount']) ?></p>
                                                     </td>
-                                                    <td class="px-8 py-6">
+                                                    <td class="hidden md:table-cell px-8 py-6">
                                                         <div class="flex flex-col gap-2 scale-90">
                                                             <form method="POST">
                                                                 <input type="hidden" name="action" value="toggle-status">
@@ -908,15 +982,15 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                                                             </form>
                                                         </div>
                                                     </td>
-                                                    <td class="px-8 py-6 text-right whitespace-nowrap">
-                                                        <div class="flex justify-end gap-2 text-md">
-                                                            <button onclick="editTx(<?= htmlspecialchars(json_encode($t)) ?>)" class="w-8 h-8 flex items-center justify-center bg-slate-50 rounded-xl hover:bg-indigo-600 hover:text-white text-slate-400 transition-all shadow-sm"><i class="fa-solid fa-pen-to-square"></i></button>
+                                                    <td class="px-4 lg:px-8 py-6 text-right whitespace-nowrap">
+                                                        <div class="flex justify-end gap-1 lg:gap-2">
+                                                            <button onclick="editTx(<?= htmlspecialchars(json_encode($t)) ?>)" class="w-7 h-7 lg:w-8 lg:h-8 flex items-center justify-center bg-slate-50 rounded-lg lg:rounded-xl hover:bg-indigo-600 hover:text-white text-slate-400 transition-all shadow-sm"><i class="fa-solid fa-pen-to-square text-[10px] lg:text-sm"></i></button>
                                                             <form method="POST" class="inline">
                                                                 <input type="hidden" name="action" value="repeat">
                                                                 <input type="hidden" name="id" value="<?= $t['id'] ?>">
-                                                                <button type="submit" class="w-8 h-8 flex items-center justify-center bg-slate-50 rounded-xl hover:bg-emerald-500 hover:text-white text-slate-400 transition-all shadow-sm"><i class="fa-solid fa-rotate-right"></i></button>
+                                                                <button type="submit" class="w-7 h-7 lg:w-8 lg:h-8 flex items-center justify-center bg-slate-50 rounded-lg lg:rounded-xl hover:bg-emerald-500 hover:text-white text-slate-400 transition-all shadow-sm"><i class="fa-solid fa-rotate-right text-[10px] lg:text-sm"></i></button>
                                                             </form>
-                                                            <button onclick="triggerConfirm('Excluir?', 'Este registro será removido.', 'delete', '<?= $t['id'] ?>')" class="w-8 h-8 flex items-center justify-center bg-slate-50 rounded-xl hover:bg-rose-500 hover:text-white text-slate-400 transition-all shadow-sm"><i class="fa-solid fa-trash-can"></i></button>
+                                                            <button onclick="triggerConfirm('Excluir?', 'Este registro será removido.', 'delete', '<?= $t['id'] ?>')" class="w-7 h-7 lg:w-8 lg:h-8 flex items-center justify-center bg-slate-50 rounded-lg lg:rounded-xl hover:bg-rose-500 hover:text-white text-slate-400 transition-all shadow-sm"><i class="fa-solid fa-trash-can text-[10px] lg:text-sm"></i></button>
                                                         </div>
                                                     </td>
                                                 </tr>
@@ -1004,11 +1078,98 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                             </div>
                         <?php endif; ?>
                     </div>
+
+                <?php elseif ($active_tab === 'pacientes'): ?>
+                    <div class="max-w-7xl mx-auto space-y-8 pb-20 px-4">
+                        <div class="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 mb-8">
+                            <div>
+                                <h3 class="text-3xl font-black text-slate-900 tracking-tight">Gestão de Pacientes</h3>
+                                <p class="text-[11px] font-bold text-slate-400 uppercase tracking-widest mt-1">Base de clientes e histórico de faturamento</p>
+                            </div>
+                            <div class="bg-indigo-600 px-6 py-4 rounded-[2rem] shadow-xl shadow-indigo-100 w-full md:w-auto flex items-center gap-4">
+                                <div class="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center text-white"><i class="fa-solid fa-users"></i></div>
+                                <div>
+                                    <p class="text-[10px] font-black text-indigo-100 uppercase tracking-widest leading-none mb-1">Total de Pacientes</p>
+                                    <p class="text-xl font-black text-white leading-none"><?= count($pacientes) ?></p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Filtros de Pacientes -->
+                        <div class="bg-white p-4 rounded-[2.5rem] border border-slate-200 shadow-sm flex flex-col md:flex-row gap-4 items-center">
+                            <form class="flex-1 flex flex-col md:flex-row gap-4 w-full">
+                                <input type="hidden" name="tab" value="pacientes">
+                                <div class="relative flex-1">
+                                    <span class="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400"><i class="fa-solid fa-magnifying-glass"></i></span>
+                                    <input type="text" name="p_search" value="<?= $p_search ?>" placeholder="Buscar por nome ou CPF..." class="w-full pl-12 pr-5 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-indigo-50 transition-all">
+                                </div>
+                                <div class="flex gap-2 w-full md:w-auto">
+                                    <select name="p_sort" onchange="this.form.submit()" class="flex-1 md:w-48 px-5 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-indigo-50 transition-all">
+                                        <option value="nome" <?= $p_sort=='nome'?'selected':'' ?>>Nome (A-Z)</option>
+                                        <option value="valor" <?= $p_sort=='valor'?'selected':'' ?>>Faturamento (Maior)</option>
+                                        <option value="sessoes" <?= $p_sort=='sessoes'?'selected':'' ?>>Nº de Sessões</option>
+                                        <option value="recente" <?= $p_sort=='recente'?'selected':'' ?>>Sessão Recente</option>
+                                    </select>
+                                    <?php if($p_search): ?>
+                                        <a href="?tab=pacientes" class="w-12 h-12 bg-slate-100 text-slate-400 rounded-2xl flex items-center justify-center hover:bg-rose-50 hover:text-rose-500 transition-all">✕</a>
+                                    <?php endif; ?>
+                                    <button type="submit" class="px-8 py-3.5 bg-slate-900 text-white rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-slate-800 transition-all">Filtrar</button>
+                                </div>
+                            </form>
+                        </div>
+
+                        <?php if(empty($pacientes)): ?>
+                            <div class="bg-white rounded-[3rem] border border-slate-100 p-20 text-center shadow-sm">
+                                <div class="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-6 text-3xl">👤</div>
+                                <h4 class="text-xl font-black text-slate-900 mb-2">Nenhum paciente encontrado</h4>
+                                <p class="text-sm text-slate-400 font-medium">Os pacientes aparecem aqui automaticamente ao realizar lançamentos no Livro Caixa.</p>
+                            </div>
+                        <?php else: ?>
+                            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                                <?php foreach($pacientes as $p): ?>
+                                    <div class="bg-white rounded-[2.5rem] p-8 border border-slate-200 shadow-sm hover:shadow-2xl transition-all group relative overflow-hidden active:scale-95">
+                                        <div class="absolute top-0 right-0 w-24 h-24 bg-indigo-50 rounded-full -mr-12 -mt-12 group-hover:bg-indigo-100 transition-all opacity-40"></div>
+                                        
+                                        <div class="relative z-10 text-left">
+                                            <div class="flex items-center gap-4 mb-6 text-left">
+                                                <img src="https://ui-avatars.com/api/?name=<?= urlencode($p['nome']) ?>&background=f1f5f9&color=6366f1" class="w-14 h-14 rounded-2xl shadow-inner border border-slate-100">
+                                                <div class="text-left">
+                                                    <h4 class="text-lg font-black text-slate-900 leading-tight"><?= $p['nome'] ?></h4>
+                                                    <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5 truncate max-w-[150px]"><?= $p['cpf'] ?: 'CPF não informado' ?></p>
+                                                </div>
+                                            </div>
+
+                                            <div class="grid grid-cols-2 bg-slate-50/80 rounded-2xl p-4 gap-4 mb-6">
+                                                <div class="text-left">
+                                                    <p class="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Faturamento</p>
+                                                    <p class="text-sm font-black text-indigo-600"><?= fmtBRL($p['total_gasto']) ?></p>
+                                                </div>
+                                                <div class="text-right">
+                                                    <p class="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Sessões</p>
+                                                    <p class="text-sm font-black text-slate-800"><?= $p['sessões'] ?></p>
+                                                </div>
+                                            </div>
+
+                                            <div class="flex items-center justify-between">
+                                                <div class="text-left">
+                                                    <p class="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Última Sessão</p>
+                                                    <p class="text-[11px] font-bold text-slate-600"><?= fmtDateBR($p['ult_sessao']) ?></p>
+                                                </div>
+                                                <a href="?tab=cashbook&month=all&search=<?= urlencode($p['nome']) ?>" class="w-10 h-10 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center hover:bg-indigo-600 hover:text-white transition-all shadow-sm" title="Ver Histórico">
+                                                    <i class="fa-solid fa-list-ul"></i>
+                                                </a>
+                                            </div>
+                                        </div>
+                                    </div>
+                                <?php endforeach; ?>
+                            </div>
+                        <?php endif; ?>
+                    </div>
+
                 <?php elseif ($active_tab === 'reports'): 
                     // Lógica de Inteligência Financeira (SIMULAÇÃO DE IA COM DADOS REAIS)
                     $current_month = date('Y-m');
                     $last_month = date('Y-m', strtotime('-1 month'));
-                    
                     $income_curr = 0; $income_last = 0;
                     foreach($all_tx as $t) {
                         $m = substr($t['date'], 0, 7);
@@ -1017,19 +1178,8 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                             if ($m === $last_month) $income_last += $t['amount'];
                         }
                     }
-                    
                     $growth = ($income_last > 0) ? (($income_curr - $income_last) / $income_last) * 100 : 0;
                     $profit_margin = ($totals_all['income'] > 0) ? ($totals_all['net'] / $totals_all['income']) * 100 : 0;
-                    
-                    // Top Paciente
-                    $pacientes = [];
-                    foreach($all_tx as $t) {
-                        if($t['type'] === 'INCOME' && $t['beneficiaryName']) {
-                            $pacientes[$t['beneficiaryName']] = ($pacientes[$t['beneficiaryName']] ?? 0) + $t['amount'];
-                        }
-                    }
-                    arsort($pacientes);
-                    $top_paciente = !empty($pacientes) ? [key($pacientes), current($pacientes)] : ['Nenhum', 0];
                 ?>
                     <div class="max-w-7xl mx-auto space-y-8 pb-20">
                         <!-- AI Header -->
@@ -1135,9 +1285,9 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
     </div>
 
     <!-- Modals -->
-    <div id="txModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-md hidden z-[100] items-center justify-center p-4">
-        <div class="bg-white w-full max-w-2xl rounded-[3rem] shadow-2xl overflow-hidden animate-fade-in border border-slate-200">
-            <div class="p-8 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+    <div id="txModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-md hidden z-[100] items-center justify-center p-0 lg:p-4">
+        <div class="bg-white w-full max-w-2xl h-full lg:h-auto lg:rounded-[3rem] shadow-2xl overflow-y-auto lg:overflow-hidden animate-fade-in border border-slate-200">
+            <div class="p-6 lg:p-8 border-b border-slate-100 flex justify-between items-center bg-slate-50/50 sticky top-0 z-10 backdrop-blur-sm">
                 <div>
                     <h3 id="modalTitle" class="text-2xl font-black text-slate-900 tracking-tight">Novo Lançamento</h3>
                     <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Gestão de Fluxo Profissional</p>
@@ -1191,25 +1341,41 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                     </div>
                 </div>
 
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div class="space-y-2">
-                        <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Nome do Paciente</label>
-                        <input type="text" name="beneficiaryName" id="field_beneficiaryName" class="w-full px-5 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-medium outline-none">
+                <!-- Compact Patient/Payer Section -->
+                <div class="p-6 bg-slate-50 rounded-[2.5rem] border border-slate-100 space-y-5">
+                    <div class="flex items-center justify-between px-2">
+                        <p class="text-[10px] font-black text-indigo-600 uppercase tracking-[0.2em]">Identificação do Atendimento</p>
+                        <div class="flex items-center gap-2">
+                            <input type="checkbox" id="payerIsSame" checked onchange="togglePayerFields()" class="w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500">
+                            <label for="payerIsSame" class="text-[10px] font-bold text-slate-500 uppercase cursor-pointer">Pagador é o Paciente</label>
+                        </div>
                     </div>
-                    <div class="space-y-2">
-                        <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">CPF Paciente</label>
-                        <input type="text" name="beneficiaryCpf" id="field_beneficiaryCpf" class="w-full px-5 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-medium outline-none">
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="space-y-2 relative">
+                            <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Nome do Paciente</label>
+                            <input type="text" name="beneficiaryName" id="field_beneficiaryName" autocomplete="off" oninput="handlePatientInput(this)" class="w-full px-5 py-3.5 bg-white border border-slate-200 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all">
+                            
+                            <!-- Autocomplete Dropdown -->
+                            <div id="patientSuggestions" class="absolute left-0 right-0 top-full mt-2 bg-white border border-slate-200 rounded-2xl shadow-2xl z-[110] hidden overflow-hidden">
+                                <ul id="patientList" class="max-h-60 overflow-y-auto divide-y divide-slate-50"></ul>
+                            </div>
+                        </div>
+                        <div class="space-y-2">
+                            <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">CPF Paciente</label>
+                            <input type="text" name="beneficiaryCpf" id="field_beneficiaryCpf" oninput="syncPayer()" class="w-full px-5 py-3.5 bg-white border border-slate-200 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all">
+                        </div>
                     </div>
-                </div>
 
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div class="space-y-2">
-                        <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Pagador (Responsável)</label>
-                        <input type="text" name="payerName" id="field_payerName" class="w-full px-5 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-medium outline-none">
-                    </div>
-                    <div class="space-y-2">
-                        <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">CPF Pagador</label>
-                        <input type="text" name="payerCpf" id="field_payerCpf" class="w-full px-5 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-medium outline-none">
+                    <div id="payerSection" class="grid grid-cols-1 md:grid-cols-2 gap-4 hidden border-t border-slate-100 pt-5 animate-fade-in">
+                        <div class="space-y-2">
+                            <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Nome do Pagador</label>
+                            <input type="text" name="payerName" id="field_payerName" class="w-full px-5 py-3.5 bg-white border border-slate-200 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all">
+                        </div>
+                        <div class="space-y-2">
+                            <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">CPF Pagador</label>
+                            <input type="text" name="payerCpf" id="field_payerCpf" class="w-full px-5 py-3.5 bg-white border border-slate-200 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all">
+                        </div>
                     </div>
                 </div>
 
@@ -1292,6 +1458,7 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
 
     <script>
         const INITIAL_MESSAGE = '<?= $message ?>';
+        const BRAIN_PATIENTS = <?= json_encode($pacientes_list_js) ?>;
         
         function showToast(text, type = 'success') {
             const toast = document.createElement('div');
@@ -1388,6 +1555,11 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
             form.elements['beneficiaryName'].value = t.beneficiaryName;
             form.elements['beneficiaryCpf'].value = t.beneficiaryCpf || '';
             form.elements['observation'].value = t.observation || '';
+
+            // Lógica de Sincronização de Pagador
+            const isSame = (t.beneficiaryName === t.payerName && (t.beneficiaryCpf || '') === (t.payerCpf || ''));
+            document.getElementById('payerIsSame').checked = isSame;
+            togglePayerFields();
         }
 
         function switchImportTab(tabId) {
@@ -1407,13 +1579,117 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
             }
         }
 
-        // Close Popups on click outside
+        function toggleSidebar() {
+            const s = document.getElementById('mainSidebar');
+            s.classList.toggle('sidebar-closed');
+            s.classList.toggle('sidebar-open');
+        }
+
+        function togglePayerFields() {
+            const isSame = document.getElementById('payerIsSame').checked;
+            const section = document.getElementById('payerSection');
+            if (isSame) {
+                section.classList.add('hidden');
+                syncPayer();
+            } else {
+                section.classList.remove('hidden');
+            }
+        }
+
+        function syncPayer() {
+            if (document.getElementById('payerIsSame').checked) {
+                document.getElementById('field_payerName').value = document.getElementById('field_beneficiaryName').value;
+                document.getElementById('field_payerCpf').value = document.getElementById('field_beneficiaryCpf').value;
+            }
+        }
+
+        // --- Autocomplete Logic ---
+        function handlePatientInput(input) {
+            const query = input.value.toLowerCase().trim();
+            const list = document.getElementById('patientList');
+            const wrapper = document.getElementById('patientSuggestions');
+            
+            if (query.length < 2) {
+                wrapper.classList.add('hidden');
+                syncPayer();
+                return;
+            }
+
+            const matches = BRAIN_PATIENTS.filter(p => p.nome.toLowerCase().includes(query));
+            
+            if (matches.length === 0) {
+                wrapper.classList.add('hidden');
+                syncPayer();
+                return;
+            }
+
+            list.innerHTML = matches.map(p => `
+                <li onclick='selectPatient(${JSON.stringify(p).replace(/'/g, "&apos;")})' class="px-5 py-3 hover:bg-slate-50 cursor-pointer flex items-center gap-3 transition-colors">
+                    <img src="https://ui-avatars.com/api/?name=${encodeURIComponent(p.nome)}&background=f1f5f9&color=6366f1" class="w-8 h-8 rounded-lg">
+                    <div>
+                        <p class="text-[13px] font-bold text-slate-900 leading-none">${p.nome}</p>
+                        <p class="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-1">${p.cpf || 'Sem CPF'}</p>
+                    </div>
+                </li>
+            `).join('');
+            
+            wrapper.classList.remove('hidden');
+            syncPayer();
+        }
+
+        function selectPatient(p) {
+            document.getElementById('field_beneficiaryName').value = p.nome;
+            document.getElementById('field_beneficiaryCpf').value = p.cpf || '';
+            
+            // Lógica inteligente de Pagador
+            const hasDifferentPayer = (p.payerName && p.payerName !== p.nome) || (p.payerCpf && p.payerCpf !== p.cpf);
+            
+            if (hasDifferentPayer) {
+                document.getElementById('payerIsSame').checked = false;
+                document.getElementById('field_payerName').value = p.payerName;
+                document.getElementById('field_payerCpf').value = p.payerCpf || '';
+            } else {
+                document.getElementById('payerIsSame').checked = true;
+                document.getElementById('field_payerName').value = p.nome;
+                document.getElementById('field_payerCpf').value = p.cpf || '';
+            }
+            
+            togglePayerFields();
+            document.getElementById('patientSuggestions').classList.add('hidden');
+        }
+
+        function toggleProfileMenu(e) {
+            e.stopPropagation();
+            const d = document.getElementById('profileDropdown');
+            d.classList.toggle('hidden');
+        }
+
+        // Close Popups and Dropdowns on click outside
         window.addEventListener('click', (e) => {
-            const modals = ['txModal', 'importModal'];
+            // Dropdown Autocomplete
+            const suggestions = document.getElementById('patientSuggestions');
+            if (suggestions && !suggestions.classList.contains('hidden') && !e.target.closest('#field_beneficiaryName')) {
+                suggestions.classList.add('hidden');
+            }
+
+            // Modals
+            const modals = ['txModal', 'importModal', 'confirmModal'];
             modals.forEach(id => {
                 const m = document.getElementById(id);
-                if (e.target === m) closeModal(id);
+                if (m && e.target === m) closeModal(id);
             });
+
+            // Profile Dropdown
+            const dropdown = document.getElementById('profileDropdown');
+            if (dropdown && !dropdown.classList.contains('hidden') && !dropdown.contains(e.target)) {
+                dropdown.classList.add('hidden');
+            }
+
+            // Mobile Sidebar
+            const sidebar = document.getElementById('mainSidebar');
+            if (window.innerWidth < 1024 && sidebar.classList.contains('sidebar-open') && !sidebar.contains(e.target) && !e.target.closest('button[onclick="toggleSidebar()"]')) {
+                toggleSidebar();
+            }
         });
     </script>
 </body>

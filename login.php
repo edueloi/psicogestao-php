@@ -80,7 +80,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         </div>
 
         <div class="mb-10">
-            <h2 class="text-3xl font-black text-slate-900 tracking-tight mb-3">Bem-vinda, Karen.</h2>
+            <h2 class="text-3xl font-black text-slate-900 tracking-tight mb-3">Bem-vinda ao seu consultório.</h2>
             <p class="text-slate-500 font-medium italic">"A organização é a base para o cuidado de excelência."</p>
         </div>
 
@@ -124,7 +124,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         </form>
 
         <p class="mt-12 text-center text-slate-300 text-[10px] font-bold uppercase tracking-widest">
-            Exclusivo para Karen Gomes • Versão Profissional
+            Acesso Restrito • Gestão Profissional
         </p>
     </div>
   </div>
@@ -143,13 +143,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <p class="text-xl text-indigo-100/80 font-medium leading-relaxed max-w-lg">Plataforma personalizada para centralização de fluxo financeiro, relatórios de performance e gestão estratégica de pacientes.</p>
         </div>
 
-        <!-- Perfil da Karen -->
+        <!-- Perfil Profissional -->
         <div class="glass-card mb-8 p-8 rounded-[2.5rem] flex items-center gap-6 border border-white/20">
-            <div class="w-20 h-20 rounded-2xl bg-slate-900 flex items-center justify-center text-white text-3xl shadow-xl font-black ring-4 ring-white/10">KG</div>
+            <div class="w-20 h-20 rounded-2xl bg-slate-900 flex items-center justify-center text-white text-3xl shadow-xl font-black ring-4 ring-white/10 italic">Ψ</div>
             <div>
-                <h3 class="text-2xl font-black text-slate-900">Karen Gomes</h3>
-                <p class="text-indigo-600 font-extrabold text-sm uppercase tracking-widest">Psicóloga Clínica e TCC</p>
-                <p class="text-slate-500 font-bold text-xs mt-1">CRP 06/172315</p>
+                <h3 class="text-2xl font-black text-white">PsicoGestão</h3>
+                <p class="text-indigo-300 font-extrabold text-sm uppercase tracking-widest">Sua Clínica Digital</p>
+                <p class="text-white/60 font-bold text-xs mt-1">Gestão de Performane e Pacientes</p>
             </div>
         </div>
 

@@ -16,3 +16,7 @@ if ($is_local) {
     define('DB_USER', 'edua6062_karengomes');
     define('DB_PASS', 'Bibia.0110');
 }
+
+// --- CONFIGURAÇÃO GEMINI AI ---
+define('GEMINI_API_KEY', 'AIzaSyBcLHc0XMaKxOQ34tIhDeALe-PNEePb9D8');
+define('GEMINI_API_URL', 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent');

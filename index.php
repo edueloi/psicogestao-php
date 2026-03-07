@@ -28,7 +28,15 @@ if (empty($_SESSION['psicogestao_auth']) || $_SESSION['psicogestao_auth'] !== tr
 $pdo = db();
 $user_id = $_SESSION['psicogestao_id'] ?? 'user_karen';
 $user_email = $_SESSION['psicogestao_user'] ?? 'karen.l.s.gomes@gmail.com';
-$user_name = $_SESSION['psicogestao_name'] ?? 'Karen Gomes';
+$user_name = $_SESSION['psicogestao_name'] ?? 'Usuário';
+
+// Gerar iniciais dinâmicas
+$name_parts = explode(' ', $user_name);
+$user_initials = mb_substr($name_parts[0], 0, 1);
+if (count($name_parts) > 1) {
+    $user_initials .= mb_substr(end($name_parts), 0, 1);
+}
+$user_initials = mb_strtoupper($user_initials);
 
 // Carregar Configurações de Sessão filtradas por usuário
 $stmt = $pdo->prepare('SELECT * FROM session_types WHERE userId = ? ORDER BY name ASC');
@@ -58,6 +66,32 @@ $PROVISION_RULES = [
 $message = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
+
+    // Ação AJAX para o Chat IA
+    if ($action === 'ask_ai') {
+        header('Content-Type: application/json');
+        $question = trim($_POST['question'] ?? '');
+        if (empty($question)) {
+            echo json_encode(['error' => 'Pergunta vazia']); exit;
+        }
+
+        // Contexto completo para o Gemini
+        $ctx_prompt = "Você é um consultor financeiro IA integrado ao sistema PsicoGestão do(a) profissional $user_name. 
+        DADOS ATUAIS DE $user_name:
+        - Faturamento Total (Histórico): R$ " . number_format($totals_all['income'], 2) . "
+        - Gasto Total (Histórico): R$ " . number_format($totals_all['expense'], 2) . "
+        - Saldo Líquido: R$ " . number_format($totals_all['liquid'], 2) . "
+        - Total Pacientes Ativos: " . count($pacientes) . "
+        - Melhor Paciente: " . $top_paciente[0] . "
+        
+        PERGUNTA DE $user_name: \"$question\"
+        
+        Responda de forma curta, profissional e baseada nos dados cima se for relevante. Se a pessoa perguntar algo fora do sistema, responda educadamente que seu foco é a gestão do consultório dela.";
+
+        $answer = gemini_query($ctx_prompt);
+        echo json_encode(['answer' => $answer, 'initials' => $user_initials]);
+        exit;
+    }
 
     if ($action === 'save') {
         $id = $_POST['id'] ?? uniqid('tx_', true);
@@ -1406,7 +1440,7 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                     </div>
 
                 <?php elseif ($active_tab === 'reports'): 
-                    // Lógica de Inteligência Financeira (SIMULAÇÃO DE IA COM DADOS REAIS)
+                    // Lógica de Inteligência Financeira (USANDO GEMINI 1.5 FLASH)
                     $current_month = date('Y-m');
                     $last_month = date('Y-m', strtotime('-1 month'));
                     $income_curr = 0; $income_last = 0;
@@ -1419,95 +1453,209 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                     }
                     $growth = ($income_last > 0) ? (($income_curr - $income_last) / $income_last) * 100 : 0;
                     $profit_margin = ($totals_all['income'] > 0) ? ($totals_all['net'] / $totals_all['income']) * 100 : 0;
+
+                    // CONSTRUIR PROMPT PARA O GEMINI
+                    $prompt = "Você é um consultor financeiro especialista para psicólogos. Analise os dados de $user_name e dê 3 dicas práticas e curtas (máximo 2 linhas cada) focadas em saúde financeira e crescimento. Use um tom encorajador e profissional.
+                    DADOS:
+                    - Faturamento Mês Atual: R$ " . number_format($income_curr, 2, ',', '.') . "
+                    - Crescimento: " . number_format($growth, 1) . "%
+                    - Margem de Lucro: " . number_format($profit_margin, 1) . "%
+                    - Total de Pacientes: " . count($pacientes) . "
+                    - Paciente Top (maior faturamento): " . $top_paciente[0] . "
+                    - Reserva para Impostos necessária: R$ " . number_format($totals_all['total_prov'], 2, ',', '.') . "
+                    
+                    RESPONDA APENAS AS 3 DICAS EM FORMATO DE LISTA (tópicos).";
+
+                    $ai_analysis = gemini_query($prompt);
                 ?>
-                    <div class="max-w-7xl mx-auto space-y-8 pb-20">
-                        <!-- AI Header -->
-                        <div class="bg-slate-900 rounded-[3rem] p-10 text-white relative overflow-hidden shadow-2xl shadow-slate-200">
-                            <div class="absolute top-0 right-0 w-96 h-96 bg-indigo-600 rounded-full -mr-32 -mt-32 blur-[100px] opacity-40"></div>
-                            <div class="absolute bottom-0 left-0 w-64 h-64 bg-violet-600 rounded-full -ml-32 -mb-32 blur-[80px] opacity-20"></div>
+                    <div class="max-w-7xl mx-auto space-y-10 pb-20">
+                        <!-- Premium AI Hero -->
+                        <div class="relative bg-slate-900 rounded-[3.5rem] p-12 overflow-hidden shadow-2xl">
+                            <!-- Animated Background Blobs -->
+                            <div class="absolute -top-24 -right-24 w-96 h-96 bg-indigo-600/30 rounded-full blur-[100px] animate-pulse"></div>
+                            <div class="absolute -bottom-24 -left-24 w-72 h-72 bg-emerald-500/20 rounded-full blur-[80px] animate-pulse" style="animation-delay: 2s;"></div>
                             
-                            <div class="relative z-10 flex flex-col md:flex-row justify-between items-center gap-8">
-                                <div class="max-w-xl">
-                                    <div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-indigo-500/20 border border-indigo-500/30 text-indigo-400 text-[10px] font-black uppercase tracking-widest mb-6">
-                                        <span class="relative flex h-2 w-2">
-                                          <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
-                                          <span class="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
+                            <div class="relative z-10 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-12">
+                                <div class="max-w-2xl space-y-6">
+                                    <div class="inline-flex items-center gap-3 px-5 py-2 rounded-full bg-white/5 border border-white/10 text-indigo-300 text-[10px] font-black uppercase tracking-[0.3em]">
+                                        <span class="flex h-2 w-2">
+                                            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                                            <span class="relative inline-flex rounded-full h-2 w-2 bg-indigo-500 shadow-[0_0_10px_rgba(99,102,241,0.8)]"></span>
                                         </span>
-                                        AI Financial Brain Ativo
+                                        Consultoria Financeira IA Ativa
                                     </div>
-                                    <h2 class="text-4xl font-black mb-4 leading-tight">Olá, Dra. Karen. <br> Analisei seus números hoje.</h2>
-                                    <p class="text-slate-400 text-sm leading-relaxed font-medium">Com base nos seus lançamentos recentes, identifiquei um crescimento de <span class="text-emerald-400 font-bold"><?= number_format($growth, 1) ?>%</span> em relação ao mês anterior. Sua lucratividade líquida está em <span class="text-indigo-400 font-bold"><?= number_format($profit_margin, 1) ?>%</span>.</p>
+                                    <h2 class="text-5xl font-black text-white leading-[1.1] tracking-tight">
+                                        Insights de <br> <span class="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-emerald-400">Performance Clínica</span>
+                                    </h2>
+                                    <p class="text-slate-400 text-lg font-medium leading-relaxed">
+                                        Olá, <span class="text-white"><?= $user_name ?></span>. Analisamos seu fluxo atual: seu faturamento cresceu <span class="text-emerald-400 font-bold"><?= number_format($growth, 1) ?>%</span> e sua margem líquida é de <span class="text-indigo-400 font-bold"><?= number_format($profit_margin, 1) ?>%</span>.
+                                    </p>
+                                    <div class="pt-4 flex flex-wrap gap-4">
+                                        <button onclick="openModal('aiChatModal')" class="group px-8 py-5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] shadow-2xl shadow-indigo-600/30 transition-all active:scale-95 flex items-center gap-4">
+                                            <i class="fa-solid fa-sparkles text-lg group-hover:rotate-12 transition-transform"></i>
+                                            Falar com Consultor IA
+                                        </button>
+                                        <button class="px-8 py-5 bg-white/5 hover:bg-white/10 text-white/70 border border-white/10 rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] transition-all flex items-center gap-3">
+                                            <i class="fa-solid fa-file-pdf text-lg"></i>
+                                            Exportar Relatório
+                                        </button>
+                                    </div>
                                 </div>
-                                <div class="flex gap-4">
-                                    <div class="bg-white/5 border border-white/10 p-6 rounded-[2.5rem] backdrop-blur-md text-center">
-                                        <p class="text-[9px] font-black uppercase tracking-widest text-slate-500 mb-2">Score de Saúde</p>
-                                        <div class="text-5xl font-black text-emerald-400">9.4</div>
-                                        <p class="text-[9px] font-bold text-slate-400 mt-2">NÍVEL EXCELENTE</p>
+
+                                <!-- Health Score Hexagon or Card -->
+                                <div class="relative group">
+                                    <div class="absolute inset-0 bg-indigo-500/20 blur-[40px] rounded-full group-hover:bg-indigo-500/30 transition-all"></div>
+                                    <div class="relative bg-white/5 backdrop-blur-2xl border border-white/10 p-10 rounded-[3rem] text-center w-full lg:w-64">
+                                        <p class="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500 mb-4">Score de Saúde</p>
+                                        <div class="text-7xl font-black text-emerald-400 tracking-tighter shadow-emerald-400/20 drop-shadow-2xl">9.4</div>
+                                        <div class="mt-4 px-4 py-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-full text-[10px] font-bold text-emerald-400 uppercase tracking-widest">Nível Excelente</div>
                                     </div>
                                 </div>
                             </div>
                         </div>
 
-                        <!-- AI Grid -->
+                        <!-- Main Insights Grid -->
                         <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
-                            <!-- Card Insight 1 -->
-                            <div class="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm transition-all hover:shadow-xl hover:-translate-y-1">
-                                <div class="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center text-xl mb-6 shadow-inner ring-1 ring-emerald-100">💰</div>
-                                <h4 class="text-lg font-black text-slate-800 mb-2">Ponto de Equilíbrio</h4>
-                                <p class="text-xs text-slate-500 leading-relaxed font-medium italic">"Dra, você já cobriu 100% das suas despesas fixas com <?= number_format(($totals_all['expense'] / max(1, $totals_all['income'])) * 100, 0) ?>% do seu faturamento."</p>
+                            <!-- Card 1: Ponto de Equilíbrio -->
+                            <div class="bg-white p-10 rounded-[3.5rem] border border-slate-100 shadow-sm hover:shadow-2xl transition-all group overflow-hidden relative">
+                                <div class="absolute -right-10 -top-10 w-32 h-32 bg-emerald-50 rounded-full group-hover:scale-150 transition-transform duration-700 opacity-50"></div>
+                                <div class="relative z-10">
+                                    <div class="w-16 h-16 bg-emerald-50 text-emerald-600 rounded-3xl flex items-center justify-center text-2xl mb-8 group-hover:scale-110 transition-transform shadow-inner ring-1 ring-emerald-100">
+                                        <i class="fa-solid fa-scale-balanced"></i>
+                                    </div>
+                                    <h4 class="text-2xl font-black text-slate-800 mb-4">Ponto de Equilíbrio</h4>
+                                    <p class="text-sm text-slate-500 leading-relaxed font-medium">
+                                        Você já cobriu <span class="text-emerald-600 font-black">100%</span> das suas despesas fixas utilizando apenas <span class="bg-emerald-50 px-2 py-0.5 rounded-lg text-emerald-700 font-bold"><?= number_format(($totals_all['expense'] / max(1, $totals_all['income'])) * 100, 0) ?>%</span> do seu faturamento bruto.
+                                    </p>
+                                    <div class="mt-8 pt-8 border-t border-slate-50">
+                                        <div class="flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-slate-400">
+                                            <span>Cobertura</span>
+                                            <span class="text-emerald-600">Completa</span>
+                                        </div>
+                                        <div class="mt-3 h-2 bg-slate-100 rounded-full overflow-hidden">
+                                            <div class="h-full bg-emerald-500 rounded-full" style="width: 100%"></div>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
 
-                            <!-- Card Insight 2 -->
-                            <div class="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm transition-all hover:shadow-xl hover:-translate-y-1">
-                                <div class="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center text-xl mb-6 shadow-inner ring-1 ring-indigo-100">🌟</div>
-                                <h4 class="text-lg font-black text-slate-800 mb-2">Top Performance</h4>
-                                <p class="text-xs text-slate-500 leading-relaxed font-medium">Seu paciente com maior faturamento acumulado é <span class="font-black text-slate-800"><?= $top_paciente[0] ?></span>, totalizando <?= fmtBRL($top_paciente[1]) ?>.</p>
+                            <!-- Card 2: Top Performance -->
+                            <div class="bg-white p-10 rounded-[3.5rem] border border-slate-100 shadow-sm hover:shadow-2xl transition-all group overflow-hidden relative">
+                                <div class="absolute -right-10 -top-10 w-32 h-32 bg-indigo-50 rounded-full group-hover:scale-150 transition-transform duration-700 opacity-50"></div>
+                                <div class="relative z-10">
+                                    <div class="w-16 h-16 bg-indigo-50 text-indigo-600 rounded-3xl flex items-center justify-center text-2xl mb-8 group-hover:scale-110 transition-transform shadow-inner ring-1 ring-indigo-100">
+                                        <i class="fa-solid fa-crown"></i>
+                                    </div>
+                                    <h4 class="text-2xl font-black text-slate-800 mb-4">Top Performance</h4>
+                                    <p class="text-sm text-slate-500 leading-relaxed font-medium">
+                                        Seu paciente com maior faturamento acumulado é <span class="text-indigo-600 font-black"><?= $top_paciente[0] ?></span>, representando um faturamento de <span class="bg-indigo-50 px-2 py-0.5 rounded-lg text-indigo-700 font-bold"><?= fmtBRL($top_paciente[1]) ?></span>.
+                                    </p>
+                                    <div class="mt-8 pt-8 border-t border-slate-50 flex items-center gap-4">
+                                        <div class="flex-1">
+                                            <p class="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">Status de Atendimento</p>
+                                            <p class="text-xs font-bold text-slate-700 mt-1">Alta de Retenção</p>
+                                        </div>
+                                        <div class="w-10 h-10 rounded-full border-2 border-indigo-200 flex items-center justify-center text-[10px] font-black text-indigo-600 text-center">92%</div>
+                                    </div>
+                                </div>
                             </div>
 
-                            <!-- Card Insight 3 -->
-                            <div class="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm transition-all hover:shadow-xl hover:-translate-y-1">
-                                <div class="w-12 h-12 bg-amber-50 text-amber-600 rounded-2xl flex items-center justify-center text-xl mb-6 shadow-inner ring-1 ring-amber-100">⚖️</div>
-                                <h4 class="text-lg font-black text-slate-800 mb-2">Retenção Fiscal</h4>
-                                <p class="text-xs text-slate-500 leading-relaxed font-medium">Recomendamos reservar <span class="font-black text-amber-600"><?= fmtBRL($totals_all['total_prov']) ?></span> para obrigações fiscais deste período para evitar surpresas no IRPF.</p>
+                            <!-- Card 3: Retenção Fiscal -->
+                            <div class="bg-white p-10 rounded-[3.5rem] border border-slate-100 shadow-sm hover:shadow-2xl transition-all group overflow-hidden relative">
+                                <div class="absolute -right-10 -top-10 w-32 h-32 bg-amber-50 rounded-full group-hover:scale-150 transition-transform duration-700 opacity-50"></div>
+                                <div class="relative z-10">
+                                    <div class="w-16 h-16 bg-amber-50 text-amber-600 rounded-3xl flex items-center justify-center text-2xl mb-8 group-hover:scale-110 transition-transform shadow-inner ring-1 ring-amber-100">
+                                        <i class="fa-solid fa-piggy-bank"></i>
+                                    </div>
+                                    <h4 class="text-2xl font-black text-slate-800 mb-4">Reserva Fiscal</h4>
+                                    <p class="text-sm text-slate-500 leading-relaxed font-medium">
+                                        Recomendamos reservar <span class="text-amber-600 font-black"><?= fmtBRL($totals_all['total_prov']) ?></span> para obrigações deste período, garantindo zero surpresas com impostos anuais.
+                                    </p>
+                                    <div class="mt-8 pt-8 border-t border-slate-50">
+                                        <div class="flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-slate-400">
+                                            <span>Nível de Risco</span>
+                                            <span class="text-amber-600">Controlado</span>
+                                        </div>
+                                        <div class="mt-3 h-2 bg-slate-100 rounded-full overflow-hidden">
+                                            <div class="h-full bg-amber-400 rounded-full" style="width: 25%"></div>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
-                        <!-- Data Deep Dive -->
-                        <div class="bg-white rounded-[3rem] border border-slate-200 overflow-hidden shadow-sm">
-                            <div class="p-8 border-b border-slate-100 bg-slate-50/50 flex flex-col md:flex-row justify-between items-center gap-4">
-                                <div>
-                                    <h3 class="text-xl font-black text-slate-900 tracking-tight">Análise Estrutural do Caixa</h3>
-                                    <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Comparativo de Eficiência Operacional</p>
+                        <!-- Strategic AI Analysis Center -->
+                        <div class="grid grid-cols-1 lg:grid-cols-3 gap-10">
+                            <!-- Left: Detailed Margins -->
+                            <div class="lg:col-span-2 bg-white rounded-[4rem] border border-slate-100 p-12 shadow-sm">
+                                <div class="flex justify-between items-start mb-12">
+                                    <div>
+                                        <h3 class="text-3xl font-black text-slate-900 tracking-tight">Análise Estrutural do Caixa</h3>
+                                        <p class="text-[11px] font-bold text-slate-400 uppercase tracking-[0.2em] mt-2">Eficiência Operacional Detalhada</p>
+                                    </div>
+                                    <button class="w-14 h-14 bg-slate-50 text-slate-400 rounded-2xl flex items-center justify-center hover:bg-slate-900 hover:text-white transition-all shadow-sm">
+                                        <i class="fa-solid fa-ellipsis"></i>
+                                    </button>
                                 </div>
-                                <button class="px-6 py-3 bg-white border border-slate-200 rounded-2xl text-xs font-black uppercase tracking-widest text-slate-600 hover:bg-slate-50 transition-all flex items-center gap-2">
-                                    <span>📄</span> Exportar PDF Inteligente
-                                </button>
+
+                                <div class="space-y-10">
+                                    <div>
+                                        <div class="flex justify-between items-end mb-4">
+                                            <span class="text-[12px] font-black text-slate-800 uppercase tracking-widest">Margem de Lucro Bruta</span>
+                                            <span class="text-4xl font-black text-indigo-600 tracking-tighter"><?= number_format($profit_margin, 1) ?>%</span>
+                                        </div>
+                                        <div class="h-4 bg-slate-50 rounded-full overflow-hidden p-1 shadow-inner border border-slate-100">
+                                            <div class="h-full bg-gradient-to-r from-indigo-500 to-indigo-400 rounded-full shadow-lg" style="width: <?= max(5, min(100, $profit_margin)) ?>%"></div>
+                                        </div>
+                                        <p class="text-xs text-slate-400 font-bold mt-4 italic">Sua margem está saudável. Consultórios de alto padrão costumam operar entre 65% e 80% de lucro líquido.</p>
+                                    </div>
+
+                                    <div class="grid grid-cols-2 gap-8 pt-6">
+                                        <div class="p-8 bg-slate-50 rounded-[2.5rem] border border-slate-100">
+                                            <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Ticket Médio / Sessão</p>
+                                            <p class="text-2xl font-black text-slate-900">
+                                                <?php 
+                                                    $total_sessoes = 0;
+                                                    foreach($pacientes as $p) $total_sessoes += $p['sessões'];
+                                                    echo fmtBRL($totals_all['income'] / max(1, $total_sessoes));
+                                                ?>
+                                            </p>
+                                        </div>
+                                        <div class="p-8 bg-slate-50 rounded-[2.5rem] border border-slate-100">
+                                            <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Custo Fixo Mensal</p>
+                                            <p class="text-2xl font-black text-slate-900"><?= fmtBRL($totals_all['expense']) ?></p>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
-                            <div class="p-10">
-                                <div class="grid grid-cols-1 lg:grid-cols-2 gap-12">
-                                    <div class="space-y-6">
-                                        <div class="flex justify-between items-end mb-2">
-                                            <p class="text-xs font-black text-slate-900 uppercase tracking-widest">Margem de Lucro Bruta</p>
-                                            <p class="text-xl font-black text-indigo-600"><?= number_format($profit_margin, 1) ?>%</p>
+
+                            <!-- Right: AI Brain Suggestions -->
+                            <div class="flex flex-col gap-8">
+                                <div class="bg-indigo-600 rounded-[4rem] p-10 text-white shadow-xl shadow-indigo-100 relative overflow-hidden group">
+                                    <div class="absolute -top-10 -right-10 w-40 h-40 bg-white/10 rounded-full blur-3xl group-hover:scale-150 transition-all duration-1000"></div>
+                                    <h5 class="text-sm font-black text-white/40 mb-8 uppercase tracking-[0.2em]">IA Brain: Análise Estratégica</h5>
+                                    
+                                    <div class="space-y-6 relative z-10">
+                                        <div class="text-[13px] font-bold text-indigo-50 leading-relaxed whitespace-pre-wrap">
+                                            <?= $ai_analysis ?>
                                         </div>
-                                        <div class="h-4 bg-slate-100 rounded-full overflow-hidden flex">
-                                            <div class="bg-indigo-600 h-full transition-all duration-1000" style="width: <?= $profit_margin ?>%"></div>
+                                    </div>
+
+                                    <div class="mt-10 pt-10 border-t border-white/10 flex items-center justify-between">
+                                        <div class="flex -space-x-3">
+                                            <div class="w-10 h-10 rounded-full bg-white/10 backdrop-blur-md border-2 border-indigo-600 flex items-center justify-center text-[10px] font-black">AI</div>
+                                            <div class="w-10 h-10 rounded-full bg-indigo-500 border-2 border-indigo-600 flex items-center justify-center text-[10px] font-black"><?= $user_initials ?></div>
                                         </div>
-                                        <p class="text-[10px] text-slate-400 font-bold leading-relaxed italic">Sua margem está saudável. Consultórios de alto padrão costumam operar entre 65% e 80% de lucro líquido após impostos.</p>
+                                        <button onclick="openModal('aiChatModal')" class="text-[10px] font-black uppercase tracking-widest text-indigo-300 hover:text-white transition-colors">Ver Mais →</button>
                                     </div>
-                                    <div class="bg-slate-50 rounded-[2rem] p-8 border border-slate-100">
-                                        <h5 class="text-sm font-black text-slate-800 mb-6 uppercase tracking-[0.2em] opacity-40">IA Brain: Sugestões de Otimização</h5>
-                                        <ul class="space-y-4">
-                                            <li class="flex items-start gap-4">
-                                                <span class="w-6 h-6 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center text-[10px]">✓</span>
-                                                <p class="text-[11px] font-bold text-slate-600 leading-relaxed">Você possui <?= count($pacientes) ?> pacientes ativos. Tente diversificar as fontes caso 50% da renda venha de apenas 3 pessoas.</p>
-                                            </li>
-                                            <li class="flex items-start gap-4">
-                                                <span class="w-6 h-6 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-[10px]">!</span>
-                                                <p class="text-[11px] font-bold text-slate-600 leading-relaxed">Identificamos que <?= number_format(($totals_all['total_prov'] / max(1, $totals_all['income'])) * 100, 0) ?>% sairá para impostos. Considere investir em previdência privada para dedução fiscal.</p>
-                                            </li>
-                                        </ul>
+                                </div>
+
+                                <div class="bg-white rounded-[4rem] p-10 border border-slate-100 shadow-sm flex-1 flex flex-col justify-center items-center text-center">
+                                    <div class="w-20 h-20 bg-emerald-50 text-emerald-500 rounded-full flex items-center justify-center text-3xl mb-6 shadow-inner ring-1 ring-emerald-100 animate-bounce cursor-pointer" onclick="openModal('aiChatModal')">
+                                        <i class="fa-solid fa-wand-magic-sparkles"></i>
                                     </div>
+                                    <h5 class="text-xl font-black text-slate-900 mb-2">Dúvida Pontual?</h5>
+                                    <p class="text-sm text-slate-500 font-medium px-4">Nosso consultor IA está pronto para responder perguntas sobre faturamento, pacientes e metas.</p>
                                 </div>
                             </div>
                         </div>
@@ -1808,6 +1956,42 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                     <button type="submit" class="flex-[2] py-4 bg-slate-900 text-white rounded-2xl text-[11px] font-black uppercase tracking-widest hover:bg-slate-800 transition-all shadow-xl italic">Confirmar Duplicação</button>
                 </div>
             </form>
+        </div>
+    </div>
+
+    <!-- --- AI CHAT MODAL --- -->
+    <div id="aiChatModal" class="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-[200] hidden items-center justify-center p-4 animate-fade-in">
+        <div class="bg-white w-full max-w-2xl rounded-[3rem] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div class="bg-slate-900 p-8 text-white flex justify-between items-center shrink-0">
+                <div>
+                    <h3 class="text-2xl font-black tracking-tight">Consultoria IA Ativa</h3>
+                    <p class="text-indigo-400 text-[10px] font-black uppercase tracking-[0.3em]">PsicoGestão AI - Gemini 1.5 Flash</p>
+                </div>
+                <button onclick="closeModal('aiChatModal')" class="w-10 h-10 bg-white/10 rounded-2xl flex items-center justify-center hover:bg-white/20 transition-all font-sans">✕</button>
+            </div>
+            
+            <div id="aiChatContent" class="flex-1 overflow-y-auto p-8 space-y-6 bg-slate-50/50">
+                <div class="flex gap-4">
+                    <div class="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white shrink-0 shadow-lg shadow-indigo-100">AI</div>
+                    <div class="bg-white p-5 rounded-3xl rounded-tl-none border border-slate-100 shadow-sm text-sm font-medium text-slate-700 leading-relaxed max-w-[85%]">
+                        Olá, <?= $user_name ?>! Estou pronta para analisar seu consultório...
+                        <ul class="mt-3 space-y-2 text-[11px] font-black text-indigo-600 uppercase tracking-widest list-disc ml-4">
+                            <li>"Como posso aumentar minha margem de lucro?"</li>
+                            <li>"Qual a minha situação fiscal hoje?"</li>
+                            <li>"Resuma meu desempenho desse mês."</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <div class="p-8 bg-white border-t border-slate-100 shrink-0">
+                <div class="flex gap-3">
+                    <input type="text" id="aiQuestion" placeholder="Faça uma pergunta para a IA..." class="flex-1 px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all">
+                    <button onclick="askAI()" id="btnAskAI" class="w-14 h-14 bg-indigo-600 text-white rounded-2xl flex items-center justify-center shadow-xl shadow-indigo-100 hover:bg-indigo-700 transition-all active:scale-95">
+                        <i class="fa-solid fa-paper-plane text-lg"></i>
+                    </button>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -2171,6 +2355,65 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
             if (window.innerWidth < 1024 && sidebar.classList.contains('sidebar-open') && !sidebar.contains(e.target) && !e.target.closest('button[onclick="toggleSidebar()"]')) {
                 toggleSidebar();
             }
+        });
+
+        async function askAI() {
+            const input = document.getElementById('aiQuestion');
+            const btn = document.getElementById('btnAskAI');
+            const chat = document.getElementById('aiChatContent');
+            const question = input.value.trim();
+            
+            if(!question) return;
+
+            // Add user message
+            const userMsg = document.createElement('div');
+            userMsg.className = "flex gap-4 justify-end";
+            userMsg.innerHTML = `
+                <div class="bg-slate-900 text-white p-5 rounded-3xl rounded-tr-none shadow-xl text-sm font-medium leading-relaxed max-w-[80%]">
+                    ${question}
+                </div>
+                <div class="w-10 h-10 bg-slate-200 rounded-xl flex items-center justify-center text-slate-500 shrink-0 font-black">${'<?= $user_initials ?>'}</div>
+            `;
+            chat.appendChild(userMsg);
+            input.value = '';
+            chat.scrollTop = chat.scrollHeight;
+
+            // Loading state
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fa-solid fa-circle-notch animate-spin"></i>';
+            
+            try {
+                const formData = new FormData();
+                formData.append('action', 'ask_ai');
+                formData.append('question', question);
+
+                const response = await fetch('index.php', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+
+                const aiMsg = document.createElement('div');
+                aiMsg.className = "flex gap-4 animate-fade-in";
+                aiMsg.innerHTML = `
+                    <div class="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white shrink-0 shadow-lg">AI</div>
+                    <div class="bg-white p-5 rounded-3xl rounded-tl-none border border-slate-100 shadow-sm text-sm font-medium text-slate-700 leading-relaxed max-w-[80%] whitespace-pre-wrap">${data.answer || data.error}</div>
+                `;
+                chat.appendChild(aiMsg);
+                chat.scrollTop = chat.scrollHeight;
+
+            } catch (e) {
+                showToast('Erro ao consultar IA', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fa-solid fa-paper-plane text-lg"></i>';
+            }
+        }
+
+        // Permitir Enter para enviar
+        document.getElementById('aiQuestion')?.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') askAI();
         });
     </script>
 </body>

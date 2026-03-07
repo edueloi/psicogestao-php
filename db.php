@@ -33,7 +33,7 @@ function gemini_query($prompt) {
         return "Configure sua API Key no config.php";
     }
 
-    $url = GEMINI_API_URL . "?key=" . GEMINI_API_KEY;
+    $url = GEMINI_API_URL;
 
     $payload = [
         "contents" => [
@@ -49,7 +49,10 @@ function gemini_query($prompt) {
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
-    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'Content-Type: application/json',
+        'X-goog-api-key: ' . GEMINI_API_KEY
+    ]);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false); // Importante para HostGator se não tiver cert root
     
     $response = curl_exec($ch);

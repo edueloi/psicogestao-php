@@ -62,7 +62,71 @@ $PROVISION_RULES = [
     ['name' => 'Reserva 13º/Emergência', 'percentage' => 10, 'base' => 'NET']
 ];
 
-// 3. Processamento de Ações (POST)
+// 4. Helpers e Funções de Cálculo
+function fmtBRL($val) { return 'R$ ' . number_format($val, 2, ',', '.'); }
+function fmtDateBR($iso) { return date('d/m/Y', strtotime($iso)); }
+
+function calcTotals($list) {
+    global $PROVISION_RULES;
+    $income = 0; $expense = 0;
+    foreach($list as $t) {
+        if ($t['type'] === 'INCOME') $income += (float)$t['amount'];
+        else $expense += (float)$t['amount'];
+    }
+    $net = $income - $expense;
+    $provisions = [];
+    foreach($PROVISION_RULES as $rule) {
+        $base = ($rule['base'] === 'GROSS') ? $income : max(0, $net);
+        $amount = $base * ($rule['percentage'] / 100);
+        $provisions[] = ['name' => $rule['name'], 'amount' => $amount];
+    }
+    $total_prov = array_sum(array_column($provisions, 'amount'));
+    return [
+        'income' => $income,
+        'expense' => $expense,
+        'net' => $net,
+        'liquid' => $net - $total_prov,
+        'provisions' => $provisions,
+        'total_prov' => $total_prov
+    ];
+}
+
+// 5. Carregamento de Dados Base (Independente de Aba)
+$sql_all = $is_mysql ? "SELECT * FROM transactions WHERE userId = ? ORDER BY date DESC, internal_id DESC" : "SELECT * FROM transactions WHERE userId = ? ORDER BY date DESC, rowid DESC";
+$stmt_all = $pdo->prepare($sql_all);
+$stmt_all->execute([$user_id]);
+$all_tx = $stmt_all->fetchAll(PDO::FETCH_ASSOC);
+
+$totals_all = calcTotals($all_tx);
+
+// Processamento de Pacientes (Necessário para a IA e Dash)
+$pacientes = [];
+foreach($all_tx as $tx) {
+    if ($tx['type'] === 'INCOME' && !empty($tx['beneficiaryName'])) {
+        $key = trim($tx['beneficiaryName']) . '|' . trim($tx['beneficiaryCpf']);
+        if (!isset($pacientes[$key])) {
+            $pacientes[$key] = [
+                'nome' => trim($tx['beneficiaryName']),
+                'cpf' => trim($tx['beneficiaryCpf']),
+                'total_gasto' => 0,
+                'ult_sessao' => $tx['date'],
+                'sessões' => 0
+            ];
+        }
+        $pacientes[$key]['total_gasto'] += (float)$tx['amount'];
+        $pacientes[$key]['sessões']++;
+        if (strtotime($tx['date']) > strtotime($pacientes[$key]['ult_sessao'])) {
+            $pacientes[$key]['ult_sessao'] = $tx['date'];
+        }
+    }
+}
+$top_p_data = ['Nenhum', 0];
+foreach($pacientes as $p) {
+    if($p['total_gasto'] > $top_p_data[1]) $top_p_data = [$p['nome'], $p['total_gasto']];
+}
+$top_paciente = $top_p_data;
+
+// 6. Processamento de Ações (POST)
 $message = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
@@ -437,24 +501,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// 4. Mensagens Flash
-$message = $_SESSION['message'] ?? '';
-unset($_SESSION['message']);
-
-// 4. Busca de Dados e Filtros (LIVRO CAIXA)
-$filter_month = $_GET['month'] ?? 'archive';
+// 7. Filtros e Estados de Interface (GET)
+$active_tab = $_GET['tab'] ?? 'dashboard';
 $filter_year = $_GET['year'] ?? date('Y');
+$filter_month = $_GET['month'] ?? date('Y-m');
 $filter_type = $_GET['type'] ?? 'all';
 $filter_search = $_GET['search'] ?? '';
 
-// Filtros específicos para DASHBOARD
+// Filtros de Dashboard específicos
 $dash_month = $_GET['dash_month'] ?? date('m');
 $dash_year = $_GET['dash_year'] ?? date('Y');
 
-$where = []; $params = [];
-$where_dash = []; $params_dash = [];
+// Filtros específicos da aba Pacientes
+$p_month = $_GET['p_month'] ?? 'all';
+$p_year = $_GET['p_year'] ?? 'all';
+$p_status = $_GET['p_status'] ?? 'all';
+$p_search = $_GET['p_search'] ?? '';
+$p_sort = $_GET['p_sort'] ?? 'nome';
 
-// Dashboard Totals
+// 8. Cálculos Específicos por Contexto
+// Dashboard Totals (Filtrado por Mês/Ano do Dash)
+$where_dash = []; $params_dash = [];
 if ($dash_month !== 'all') {
     if ($is_mysql) {
         $where_dash[] = "MONTH(date) = ? AND YEAR(date) = ?";
@@ -464,200 +531,87 @@ if ($dash_month !== 'all') {
     $params_dash[] = str_pad($dash_month, 2, '0', STR_PAD_LEFT);
     $params_dash[] = $dash_year;
 } else {
-    $where_dash[] = $is_mysql ? "YEAR(date) = ?" : "strftime('%Y', date) = ?";
+    $where_dash[] = ($is_mysql ? "YEAR(date) = ?" : "strftime('%Y', date) = ?");
     $params_dash[] = $dash_year;
 }
-
 $sql_dash = "SELECT * FROM transactions WHERE userId = ?";
 if ($where_dash) $sql_dash .= " AND " . implode(" AND ", $where_dash);
-$stmt = $pdo->prepare($sql_dash);
-$stmt->execute(array_merge([$user_id], $params_dash));
-$totals_dashboard = calcTotals($stmt->fetchAll(PDO::FETCH_ASSOC));
+$stmt_dash = $pdo->prepare($sql_dash);
+$stmt_dash->execute(array_merge([$user_id], $params_dash));
+$totals_dashboard = calcTotals($stmt_dash->fetchAll(PDO::FETCH_ASSOC));
 
-// Previous Month for comparison
+// Comparativo de Crescimento (Dashboard)
 $prev_month_ts = strtotime(($dash_month === 'all' ? $dash_year : "$dash_year-$dash_month-01") . " -1 month");
 $pm = date('m', $prev_month_ts);
 $py = date('Y', $prev_month_ts);
 $sql_prev = $is_mysql 
     ? "SELECT * FROM transactions WHERE MONTH(date) = ? AND YEAR(date) = ? AND userId = ?"
     : "SELECT * FROM transactions WHERE strftime('%m', date) = ? AND strftime('%Y', date) = ? AND userId = ?";
-$stmt = $pdo->prepare($sql_prev);
-$stmt->execute([$pm, $py, $user_id]);
-$totals_prev = calcTotals($stmt->fetchAll(PDO::FETCH_ASSOC));
+$stmt_prev = $pdo->prepare($sql_prev);
+$stmt_prev->execute([$pm, $py, $user_id]);
+$totals_prev = calcTotals($stmt_prev->fetchAll(PDO::FETCH_ASSOC));
 
-// Cashbook Filters
-$sql_date_part = $is_mysql ? "DATE_FORMAT(date, '%Y-%m')" : "strftime('%Y-%m', date)";
-
-if ($filter_month === 'current') {
-    $where[] = "$sql_date_part = ?";
-    $params[] = date('Y-m');
-} elseif ($filter_month === 'last') {
-    $where[] = "$sql_date_part = ?";
-    $params[] = date('Y-m', strtotime('-1 month'));
-} elseif (preg_match('/^\d{4}-\d{2}$/', $filter_month)) {
-    $where[] = "$sql_date_part = ?";
+// Filtragem para o Livro Caixa
+$where = []; $params = [];
+if ($filter_month !== 'all' && $filter_month !== 'archive') {
+    $where[] = $is_mysql ? "DATE_FORMAT(date, '%Y-%m') = ?" : "strftime('%Y-%m', date) = ?";
     $params[] = $filter_month;
 }
-
 if ($filter_type !== 'all') {
     $where[] = "type = ?";
     $params[] = $filter_type;
 }
-
 if ($filter_search !== '') {
     $where[] = "(description LIKE ? OR payerName LIKE ? OR beneficiaryName LIKE ?)";
     $like = "%$filter_search%";
     $params[] = $like; $params[] = $like; $params[] = $like;
 }
-
-$sql_sort = $is_mysql ? "ORDER BY date DESC, internal_id DESC" : "ORDER BY date DESC, rowid DESC";
-
-$sql_all = "SELECT * FROM transactions WHERE userId = ? $sql_sort";
-$all_tx = $pdo->prepare($sql_all);
-$all_tx->execute([$user_id]);
-$all_tx = $all_tx->fetchAll(PDO::FETCH_ASSOC);
-
 $sql_filtered = "SELECT * FROM transactions WHERE userId = ?";
 if ($where) $sql_filtered .= " AND " . implode(" AND ", $where);
-$sql_filtered .= " $sql_sort";
-$stmt = $pdo->prepare($sql_filtered);
-$stmt->execute(array_merge([$user_id], $params));
-$filtered_tx = $stmt->fetchAll(PDO::FETCH_ASSOC);
+$sql_filtered .= ($is_mysql ? " ORDER BY date DESC, internal_id DESC" : " ORDER BY date DESC, rowid DESC");
+$stmt_f = $pdo->prepare($sql_filtered);
+$stmt_f->execute(array_merge([$user_id], $params));
+$filtered_tx = $stmt_f->fetchAll(PDO::FETCH_ASSOC);
 
-// 5. Cálculos do Dashboard/Resumo
-function calcTotals($list) {
-    global $PROVISION_RULES;
-    $income = 0; $expense = 0;
-    foreach($list as $t) {
-        if ($t['type'] === 'INCOME') $income += (float)$t['amount'];
-        else $expense += (float)$t['amount'];
-    }
-    $net = $income - $expense;
-    $provisions = [];
-    foreach($PROVISION_RULES as $rule) {
-        $base = ($rule['base'] === 'GROSS') ? $income : max(0, $net);
-        $amount = $base * ($rule['percentage'] / 100);
-        $provisions[] = ['name' => $rule['name'], 'amount' => $amount];
-    }
-    $total_prov = array_sum(array_column($provisions, 'amount'));
-    return [
-        'income' => $income,
-        'expense' => $expense,
-        'net' => $net,
-        'liquid' => $net - $total_prov,
-        'provisions' => $provisions,
-        'total_prov' => $total_prov
-    ];
-}
+$totals_filtered = calcTotals($filtered_tx);
 
-// 5. Agrupamento por Anos e Meses para a Vista de Archive
-$sql_years = $is_mysql 
-    ? 'SELECT DISTINCT YEAR(date) as y FROM transactions ORDER BY y DESC' 
-    : 'SELECT DISTINCT strftime("%Y", date) as y FROM transactions ORDER BY y DESC';
-$stmt = $pdo->query($sql_years);
-$available_years = $stmt->fetchAll(PDO::FETCH_COLUMN);
+// Agrupamento para View Archive
+$sql_years = $is_mysql ? 'SELECT DISTINCT YEAR(date) as y FROM transactions WHERE userId = ? ORDER BY y DESC' : 'SELECT DISTINCT strftime("%Y", date) as y FROM transactions WHERE userId = ? ORDER BY y DESC';
+$stmt_y = $pdo->prepare($sql_years);
+$stmt_y->execute([$user_id]);
+$available_years = $stmt_y->fetchAll(PDO::FETCH_COLUMN);
 if(empty($available_years)) $available_years[] = date('Y');
 
 $sql_months = $is_mysql 
-    ? 'SELECT DISTINCT DATE_FORMAT(date, "%Y-%m") as month FROM transactions WHERE YEAR(date) = ? ORDER BY month DESC'
-    : 'SELECT DISTINCT strftime("%Y-%m", date) as month FROM transactions WHERE strftime("%Y", date) = ? ORDER BY month DESC';
-$stmt = $pdo->prepare($sql_months);
-$stmt->execute([$filter_year]);
-$available_months = $stmt->fetchAll(PDO::FETCH_COLUMN);
-if(empty($available_months) && $filter_year == date('Y')) $available_months[] = date('Y-m');
+    ? 'SELECT DISTINCT DATE_FORMAT(date, "%Y-%m") as month FROM transactions WHERE YEAR(date) = ? AND userId = ? ORDER BY month DESC'
+    : 'SELECT DISTINCT strftime("%Y-%m", date) as month FROM transactions WHERE strftime("%Y", date) = ? AND userId = ? ORDER BY month DESC';
+$stmt_m = $pdo->prepare($sql_months);
+$stmt_m->execute([$filter_year, $user_id]);
+$available_months = $stmt_m->fetchAll(PDO::FETCH_COLUMN);
 
 $monthly_summaries = [];
 foreach($available_months as $m) {
-    if (!$m) continue;
-    $sql_month_sum = $is_mysql 
-        ? 'SELECT * FROM transactions WHERE DATE_FORMAT(date, "%Y-%m") = ?'
-        : 'SELECT * FROM transactions WHERE strftime("%Y-%m", date) = ?';
-    $stmt = $pdo->prepare($sql_month_sum);
-    $stmt->execute([$m]);
-    $monthly_summaries[$m] = calcTotals($stmt->fetchAll(PDO::FETCH_ASSOC));
+    $sql_sum = $is_mysql ? 'SELECT * FROM transactions WHERE DATE_FORMAT(date, "%Y-%m") = ? AND userId = ?' : 'SELECT * FROM transactions WHERE strftime("%Y-%m", date) = ? AND userId = ?';
+    $stmt_s = $pdo->prepare($sql_sum);
+    $stmt_s->execute([$m, $user_id]);
+    $monthly_summaries[$m] = calcTotals($stmt_s->fetchAll(PDO::FETCH_ASSOC));
 }
 
-$totals_all = calcTotals($all_tx);
-$totals_filtered = calcTotals($filtered_tx);
-
-// Filtros de Cálculo de Pacientes
-$p_month = $_GET['p_month'] ?? 'all';
-$p_year = $_GET['p_year'] ?? 'all';
-$p_status = $_GET['p_status'] ?? 'all';
-
-$pacientes = [];
-foreach($all_tx as $tx) {
-    if ($tx['type'] === 'INCOME' && !empty($tx['beneficiaryName'])) {
-        // Aplicar Filtros de Período e Status
-        if ($p_status !== 'all' && $tx['status'] !== $p_status) continue;
-        if ($p_year !== 'all' && date('Y', strtotime($tx['date'])) !== $p_year) continue;
-        if ($p_month !== 'all' && date('m', strtotime($tx['date'])) !== str_pad($p_month, 2, '0', STR_PAD_LEFT)) continue;
-
-        $key = trim($tx['beneficiaryName']) . '|' . trim($tx['beneficiaryCpf']);
-        if (!isset($pacientes[$key])) {
-            $pacientes[$key] = [
-                'nome' => trim($tx['beneficiaryName']),
-                'cpf' => trim($tx['beneficiaryCpf']),
-                'total_gasto' => 0,
-                'ult_sessao' => $tx['date'],
-                'sessões' => 0,
-                'payerName' => trim($tx['payerName']),
-                'payerCpf' => trim($tx['payerCpf'])
-            ];
-        }
-        $pacientes[$key]['total_gasto'] += (float)$tx['amount'];
-        $pacientes[$key]['sessões']++;
-        if (strtotime($tx['date']) > strtotime($pacientes[$key]['ult_sessao'])) {
-            $pacientes[$key]['ult_sessao'] = $tx['date'];
-        }
-    }
-}
-$pacientes_list_js = array_values($pacientes); // For JSON export
-
-// Filtros e Ordenação de Pacientes
-$p_search = $_GET['p_search'] ?? '';
-$p_sort = $_GET['p_sort'] ?? 'nome';
-
-if ($p_search !== '') {
-    $pacientes = array_filter($pacientes, function($p) use ($p_search) {
-        return stripos($p['nome'], $p_search) !== false || stripos($p['cpf'], $p_search) !== false;
-    });
-}
-
-usort($pacientes, function($a, $b) use ($p_sort) {
-    if ($p_sort === 'valor') return $b['total_gasto'] <=> $a['total_gasto'];
-    if ($p_sort === 'sessoes') return $b['sessões'] <=> $a['sessões'];
-    if ($p_sort === 'recente') return strtotime($b['ult_sessao']) <=> strtotime($a['ult_sessao']);
-    return strcmp($a['nome'], $b['nome']);
-});
-
-$top_p_data = ['Nenhum', 0];
-foreach($pacientes as $p) {
-    if($p['total_gasto'] > $top_p_data[1]) {
-        $top_p_data = [$p['nome'], $p['total_gasto']];
-    }
-}
-$top_paciente = $top_p_data;
-
-// Helpers de formatação
-function fmtBRL($val) { return 'R$ ' . number_format($val, 2, ',', '.'); }
-function fmtDateBR($iso) { return date('d/m/Y', strtotime($iso)); }
-
+// Iniciais e Helpers Finais
 $mon_names = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
-
 function getMonthName($m) {
     global $mon_names;
-    if ($m === 'all') return 'Todos os Lançamentos';
-    if ($m === 'archive') return 'Arquivo Geral';
-    if ($m === 'current') return 'Mês Atual';
-    if ($m === 'last') return 'Mês Anterior';
+    if ($m === 'all' || $m === 'archive') return 'Todos os Lançamentos';
+    if ($m === 'current') return 'Mês Atual (' . date('m/Y') . ')';
+    if ($m === 'last') return 'Mês Anterior (' . date('m/Y', strtotime('-1 month')) . ')';
     
-    $parts = explode('-', $m);
-    if (count($parts) < 2) return $m;
-    
-    $idx = (int)$parts[1] - 1;
-    $name = (isset($mon_names[$idx])) ? $mon_names[$idx] : 'Mês ' . $parts[1];
-    return $name . ' ' . $parts[0];
+    $pts = explode('-', $m);
+    if (count($pts) >= 2) {
+        $idx = (int)$pts[1] - 1;
+        $name = (isset($mon_names[$idx])) ? $mon_names[$idx] : 'Mês ' . $pts[1];
+        return $name . ' ' . $pts[0];
+    }
+    return $m;
 }
 
 $view_mode = $_GET['month'] ?? 'archive'; // 'archive' ou YYYY-MM
@@ -673,7 +627,7 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PsicoGestão - Karen Gomes Psicóloga</title>
+    <title>PsicoGestão - <?= $user_name ?></title>
     <link rel="icon" type="image/png" href="favicon_psicogestao_logo_1772840774779.png">
     <!-- Tailwind CSS & Icon Library -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -706,7 +660,7 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                 <div class="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white text-xl shadow-lg ring-4 ring-indigo-50">Ψ</div>
                 <div>
                     <h1 class="font-extrabold text-lg leading-none tracking-tight">Psico<span class="text-indigo-600">Gestão</span></h1>
-                    <p class="text-[9px] text-slate-400 font-bold uppercase tracking-widest mt-1">Karen Gomes • CRP 06/172315</p>
+                    <p class="text-[9px] text-slate-400 font-bold uppercase tracking-widest mt-1"><?= $user_name ?> • <?= $_SESSION['psicogestao_crp'] ?? '' ?></p>
                 </div>
             </div>
 
@@ -2061,7 +2015,7 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
 
     <script>
         const INITIAL_MESSAGE = '<?= $message ?>';
-        const BRAIN_PATIENTS = <?= json_encode($pacientes_list_js) ?>;
+        const BRAIN_PATIENTS = <?= json_encode(array_values($pacientes)) ?>;
         
         function showToast(text, type = 'success') {
             const toast = document.createElement('div');

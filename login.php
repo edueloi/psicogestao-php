@@ -31,6 +31,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $_SESSION['psicogestao_id'] = $user_data['id'];
     $_SESSION['psicogestao_user'] = $user_data['email'];
     $_SESSION['psicogestao_name'] = $user_data['name'];
+    $_SESSION['psicogestao_crp'] = $user_data['crp'] ?? '';
     header('Location: index.php');
     exit;
   } else {

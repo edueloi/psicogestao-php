@@ -46,6 +46,14 @@ CREATE TABLE IF NOT EXISTS session_types (
   name TEXT NOT NULL,
   default_value REAL NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS ai_chat_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId TEXT NOT NULL,
+  message TEXT NOT NULL,
+  response TEXT NOT NULL,
+  date DATETIME DEFAULT CURRENT_TIMESTAMP
+);
 ");
 
 // Adicionar colunas individualmente caso não existam (para atualizações)

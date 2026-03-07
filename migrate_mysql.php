@@ -64,6 +64,19 @@ CREATE TABLE IF NOT EXISTS session_types (
 ");
 echo "✅ Tabela 'session_types' pronta.\n";
 
+// Criar tabela de histórico de chat da IA
+$pdo->exec("
+CREATE TABLE IF NOT EXISTS ai_chat_history (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  userId VARCHAR(255) NOT NULL,
+  message TEXT NOT NULL,
+  response TEXT NOT NULL,
+  date DATETIME DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_user (userId)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+");
+echo "✅ Tabela 'ai_chat_history' pronta.\n";
+
 // Inserir usuário padrão (Karen)
 $pdo->exec("INSERT IGNORE INTO users (id, email, password, name, crp) VALUES ('user_karen', 'karen.l.s.gomes@gmail.com', 'Bibia.0110', 'Karen Gomes', 'CRP 06/172315')");
 echo "✅ Usuário padrão inserido (se não existia).\n";

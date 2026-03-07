@@ -139,20 +139,54 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             echo json_encode(['error' => 'Pergunta vazia']); exit;
         }
 
-        // Contexto completo para o Gemini
-        $ctx_prompt = "Você é um consultor financeiro IA integrado ao sistema PsicoGestão do(a) profissional $user_name. 
-        DADOS ATUAIS DE $user_name:
-        - Faturamento Total (Histórico): R$ " . number_format($totals_all['income'], 2) . "
-        - Gasto Total (Histórico): R$ " . number_format($totals_all['expense'], 2) . "
-        - Saldo Líquido: R$ " . number_format($totals_all['liquid'], 2) . "
+        // Tenta buscar histórico de chat
+        $chat_history_text = '';
+        try {
+            $stmt_hist = $pdo->prepare('SELECT * FROM ai_chat_history WHERE userId = ? ORDER BY id DESC LIMIT 5');
+            $stmt_hist->execute([$user_id]);
+            $hist = array_reverse($stmt_hist->fetchAll(PDO::FETCH_ASSOC));
+            if (!empty($hist)) {
+                $chat_history_text = "HISTÓRICO RECENTE DE CONVERSAS:\n";
+                foreach($hist as $h) {
+                    $chat_history_text .= "Usuário: {$h['message']}\n";
+                    $chat_history_text .= "Consultora: {$h['response']}\n\n";
+                }
+            }
+        } catch(Exception $e) {
+            // Ignorar se a tabela não foi criada ainda
+        }
+
+        // Contexto completo e dinâmico para o Gemini com as novas orientações de comportamento
+        $ctx_prompt = "Você é uma Assistente de Consultor Financeiro de elite trabalhando no PsicoGestão para o(a) profissional {$user_name}. 
+        INSTRUÇÕES DE COMPORTAMENTO:
+        - Você deve ser sempre muito respeitosa, educada e com profissionalismo de alto nível.
+        - Diminua MUITO a quantidade de informações na resposta: vá direto ao ponto, seja sempre excessivamente BREVE e OBJETIVA. Não se estenda.
+        - Faça avaliações financeiras de alta qualidade voltadas ao sistema PsicoGestão.
+        - Se o usuário falar sobre temas aleatórios (ex: 'Sou o presidente do Brasil'), informe com extrema educação que você é a Assistente de Consultoria Financeira e retorne o foco educadamente.
+        - Se o usuário pedir ajuda sobre fontes de renda, planos, etc., dê sugestões incríveis ('tops') e você DEVE sugerir/encaminhar para sites confiáveis relacionados.
+        - Caso o usuário peça, você pode e deve consultar as conversas anteriores inclusas no histórico abaixo.
+        
+        DADOS ATUAIS DE {$user_name}:
+        - Faturamento Total (Histórico): R$ " . number_format($totals_all['income'], 2, ',', '.') . "
+        - Gasto Total (Histórico): R$ " . number_format($totals_all['expense'], 2, ',', '.') . "
+        - Saldo Líquido: R$ " . number_format($totals_all['liquid'], 2, ',', '.') . "
         - Total Pacientes Ativos: " . count($pacientes) . "
         - Melhor Paciente: " . $top_paciente[0] . "
         
-        PERGUNTA DE $user_name: \"$question\"
+        {$chat_history_text}
         
-        Responda de forma curta, profissional e baseada nos dados cima se for relevante. Se a pessoa perguntar algo fora do sistema, responda educadamente que seu foco é a gestão do consultório dela.";
+        PERGUNTA DE {$user_name}: \"{$question}\"";
 
         $answer = gemini_query($ctx_prompt);
+
+        // Salvar log no banco de dados para construir histórico
+        try {
+            $stmt_ins = $pdo->prepare('INSERT INTO ai_chat_history (userId, message, response) VALUES (?, ?, ?)');
+            $stmt_ins->execute([$user_id, $question, $answer]);
+        } catch(Exception $e) {
+            // Ignorar erro se tabela ainda não tiver sido criada
+        }
+
         echo json_encode(['answer' => $answer, 'initials' => $user_initials]);
         exit;
     }
@@ -1409,7 +1443,9 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                     $profit_margin = ($totals_all['income'] > 0) ? ($totals_all['net'] / $totals_all['income']) * 100 : 0;
 
                     // CONSTRUIR PROMPT PARA O GEMINI
-                    $prompt = "Você é um consultor financeiro especialista para psicólogos. Analise os dados de $user_name e dê 3 dicas práticas e curtas (máximo 2 linhas cada) focadas em saúde financeira e crescimento. Use um tom encorajador e profissional.
+                    $prompt = "Você é uma Assistente de Consultor Financeiro de elite trabalhando no PsicoGestão para o(a) psicólogo(a) {$user_name}. 
+                    Analise os dados e dê 3 dicas práticas incríveis focadas em saúde financeira e crescimento (seja EXTREMAMENTE BREVE e OBJETIVA, vá direto ao ponto e não gaste cota). 
+                    Use um tom encorajador, extremante educado e profissional de altíssimo nível. Indique e encaminhe para sites/ferramentas úteis ('top') se for pertinente.
                     DADOS:
                     - Faturamento Mês Atual: R$ " . number_format($income_curr, 2, ',', '.') . "
                     - Crescimento: " . number_format($growth, 1) . "%
@@ -1418,120 +1454,120 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                     - Paciente Top (maior faturamento): " . $top_paciente[0] . "
                     - Reserva para Impostos necessária: R$ " . number_format($totals_all['total_prov'], 2, ',', '.') . "
                     
-                    RESPONDA APENAS AS 3 DICAS EM FORMATO DE LISTA (tópicos).";
+                    RESPONDA APENAS AS 3 DICAS EM FORMATO DE LISTA.";
 
                     $ai_analysis = gemini_query($prompt);
                 ?>
-                    <div class="max-w-7xl mx-auto space-y-10 pb-20">
+                    <div class="max-w-7xl mx-auto space-y-8 md:space-y-12 pb-24 px-2 sm:px-4">
                         <!-- Premium AI Hero -->
-                        <div class="relative bg-slate-900 rounded-[3.5rem] p-12 overflow-hidden shadow-2xl">
+                        <div class="relative bg-slate-900 rounded-[2.5rem] md:rounded-[3.5rem] p-6 sm:p-8 md:p-12 overflow-hidden shadow-2xl hover:shadow-[0_20px_60px_-15px_rgba(99,102,241,0.5)] transition-shadow duration-500 border border-white/5">
                             <!-- Animated Background Blobs -->
-                            <div class="absolute -top-24 -right-24 w-96 h-96 bg-indigo-600/30 rounded-full blur-[100px] animate-pulse"></div>
-                            <div class="absolute -bottom-24 -left-24 w-72 h-72 bg-emerald-500/20 rounded-full blur-[80px] animate-pulse" style="animation-delay: 2s;"></div>
+                            <div class="absolute -top-32 -right-32 w-[30rem] h-[30rem] bg-indigo-600/30 rounded-full blur-[120px] animate-pulse"></div>
+                            <div class="absolute -bottom-32 -left-32 w-[25rem] h-[25rem] bg-emerald-500/20 rounded-full blur-[100px] animate-pulse" style="animation-delay: 2s;"></div>
                             
-                            <div class="relative z-10 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-12">
-                                <div class="max-w-2xl space-y-6">
-                                    <div class="inline-flex items-center gap-3 px-5 py-2 rounded-full bg-white/5 border border-white/10 text-indigo-300 text-[10px] font-black uppercase tracking-[0.3em]">
-                                        <span class="flex h-2 w-2">
+                            <div class="relative z-10 flex flex-col xl:flex-row justify-between items-start xl:items-center gap-8 xl:gap-12">
+                                <div class="w-full xl:max-w-2xl space-y-6 md:space-y-8">
+                                    <div class="inline-flex items-center gap-3 px-4 py-2 md:px-5 md:py-2.5 rounded-full bg-white/5 backdrop-blur-md border border-white/10 text-indigo-300 text-[9px] md:text-[10px] font-black uppercase tracking-[0.3em] shadow-lg">
+                                        <span class="flex h-2.5 w-2.5">
                                             <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
-                                            <span class="relative inline-flex rounded-full h-2 w-2 bg-indigo-500 shadow-[0_0_10px_rgba(99,102,241,0.8)]"></span>
+                                            <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-indigo-500 shadow-[0_0_12px_rgba(99,102,241,0.9)]"></span>
                                         </span>
-                                        Consultoria Financeira IA Ativa
+                                        Consultoria Financeira AI
                                     </div>
-                                    <h2 class="text-5xl font-black text-white leading-[1.1] tracking-tight">
-                                        Insights de <br> <span class="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-emerald-400">Performance Clínica</span>
+                                    <h2 class="text-4xl sm:text-5xl md:text-6xl font-black text-white leading-[1.1] md:leading-[1.15] tracking-tight">
+                                        Insights de <br class="hidden sm:block"> <span class="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 via-purple-400 to-emerald-400 animate-gradient-x">Performance Clínica</span>
                                     </h2>
-                                    <p class="text-slate-400 text-lg font-medium leading-relaxed">
-                                        Olá, <span class="text-white"><?= $user_name ?></span>. Analisamos seu fluxo atual: seu faturamento cresceu <span class="text-emerald-400 font-bold"><?= number_format($growth, 1) ?>%</span> e sua margem líquida é de <span class="text-indigo-400 font-bold"><?= number_format($profit_margin, 1) ?>%</span>.
+                                    <p class="text-slate-300 text-base md:text-lg font-medium leading-relaxed max-w-xl">
+                                        Olá, <span class="text-white font-bold"><?= $user_name ?></span>. Analisamos seu fluxo atual: seu faturamento cresceu <span class="text-emerald-400 font-black tracking-wide"><?= number_format($growth, 1) ?>%</span> e sua margem líquida é de <span class="text-indigo-400 font-black tracking-wide"><?= number_format($profit_margin, 1) ?>%</span>.
                                     </p>
-                                    <div class="pt-4 flex flex-wrap gap-4">
-                                        <button onclick="openModal('aiChatModal')" class="group px-8 py-5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] shadow-2xl shadow-indigo-600/30 transition-all active:scale-95 flex items-center gap-4">
+                                    <div class="pt-2 md:pt-4 flex flex-col sm:flex-row flex-wrap gap-4">
+                                        <button onclick="openModal('aiChatModal')" class="w-full sm:w-auto px-6 py-4 md:px-8 md:py-5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white rounded-2xl md:rounded-[1.25rem] text-[10px] md:text-[11px] font-black uppercase tracking-[0.2em] shadow-xl shadow-indigo-600/30 transition-all active:scale-95 flex items-center justify-center gap-3">
                                             <i class="fa-solid fa-sparkles text-lg group-hover:rotate-12 transition-transform"></i>
-                                            Falar com Consultor IA
+                                            Falar com a IA
                                         </button>
-                                        <button class="px-8 py-5 bg-white/5 hover:bg-white/10 text-white/70 border border-white/10 rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] transition-all flex items-center gap-3">
+                                        <button class="w-full sm:w-auto px-6 py-4 md:px-8 md:py-5 bg-white/5 backdrop-blur-sm hover:bg-white/10 text-white/80 border border-white/10 rounded-2xl md:rounded-[1.25rem] text-[10px] md:text-[11px] font-black uppercase tracking-[0.2em] shadow-lg transition-all flex items-center justify-center gap-3">
                                             <i class="fa-solid fa-file-pdf text-lg"></i>
-                                            Exportar Relatório
+                                            Baixar Relatório
                                         </button>
                                     </div>
                                 </div>
 
                                 <!-- Health Score Hexagon or Card -->
-                                <div class="relative group">
-                                    <div class="absolute inset-0 bg-indigo-500/20 blur-[40px] rounded-full group-hover:bg-indigo-500/30 transition-all"></div>
-                                    <div class="relative bg-white/5 backdrop-blur-2xl border border-white/10 p-10 rounded-[3rem] text-center w-full lg:w-64">
-                                        <p class="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500 mb-4">Score de Saúde</p>
-                                        <div class="text-7xl font-black text-emerald-400 tracking-tighter shadow-emerald-400/20 drop-shadow-2xl">9.4</div>
-                                        <div class="mt-4 px-4 py-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-full text-[10px] font-bold text-emerald-400 uppercase tracking-widest">Nível Excelente</div>
+                                <div class="relative group w-full sm:max-w-xs xl:w-72 mx-auto xl:mx-0 mt-8 xl:mt-0">
+                                    <div class="absolute inset-0 bg-indigo-500/20 blur-[50px] rounded-full group-hover:bg-indigo-500/40 transition-all duration-700"></div>
+                                    <div class="relative bg-white/5 backdrop-blur-xl border border-white/10 p-8 md:p-10 rounded-[2.5rem] md:rounded-[3rem] text-center w-full transform group-hover:-translate-y-2 transition-transform duration-500 shadow-2xl">
+                                        <p class="text-[9px] md:text-[10px] font-black uppercase tracking-[0.3em] text-indigo-200/70 mb-3 md:mb-4">Score de Saúde</p>
+                                        <div class="text-6xl md:text-7xl font-black text-emerald-400 tracking-tighter shadow-emerald-400/20 drop-shadow-2xl">9.4</div>
+                                        <div class="mt-4 md:mt-5 px-4 py-2 bg-emerald-500/10 border border-emerald-500/20 rounded-full text-[9px] md:text-[10px] font-black text-emerald-400 uppercase tracking-widest inline-block shadow-inner">Nível Excelente</div>
                                     </div>
                                 </div>
                             </div>
                         </div>
 
                         <!-- Main Insights Grid -->
-                        <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 sm:gap-8 cursor-default">
                             <!-- Card 1: Ponto de Equilíbrio -->
-                            <div class="bg-white p-10 rounded-[3.5rem] border border-slate-100 shadow-sm hover:shadow-2xl transition-all group overflow-hidden relative">
-                                <div class="absolute -right-10 -top-10 w-32 h-32 bg-emerald-50 rounded-full group-hover:scale-150 transition-transform duration-700 opacity-50"></div>
+                            <div class="bg-white p-6 sm:p-8 md:p-10 rounded-[2rem] sm:rounded-[2.5rem] md:rounded-[3.5rem] border border-slate-100 shadow-sm hover:shadow-2xl transition-all duration-500 group overflow-hidden relative">
+                                <div class="absolute -right-10 -top-10 w-24 sm:w-32 h-24 sm:h-32 bg-emerald-50 rounded-full group-hover:scale-150 transition-transform duration-700 opacity-50"></div>
                                 <div class="relative z-10">
-                                    <div class="w-16 h-16 bg-emerald-50 text-emerald-600 rounded-3xl flex items-center justify-center text-2xl mb-8 group-hover:scale-110 transition-transform shadow-inner ring-1 ring-emerald-100">
+                                    <div class="w-14 h-14 sm:w-16 sm:h-16 bg-gradient-to-br from-emerald-50 to-emerald-100 text-emerald-600 rounded-[1.25rem] sm:rounded-3xl flex items-center justify-center text-xl sm:text-2xl mb-6 sm:mb-8 group-hover:scale-110 transition-transform shadow-inner ring-1 ring-emerald-200">
                                         <i class="fa-solid fa-scale-balanced"></i>
                                     </div>
-                                    <h4 class="text-2xl font-black text-slate-800 mb-4">Ponto de Equilíbrio</h4>
-                                    <p class="text-sm text-slate-500 leading-relaxed font-medium">
+                                    <h4 class="text-xl sm:text-2xl font-black text-slate-800 mb-3 sm:mb-4">Ponto de Equilíbrio</h4>
+                                    <p class="text-xs sm:text-sm text-slate-500 leading-relaxed font-medium">
                                         Você já cobriu <span class="text-emerald-600 font-black">100%</span> das suas despesas fixas utilizando apenas <span class="bg-emerald-50 px-2 py-0.5 rounded-lg text-emerald-700 font-bold"><?= number_format(($totals_all['expense'] / max(1, $totals_all['income'])) * 100, 0) ?>%</span> do seu faturamento bruto.
                                     </p>
-                                    <div class="mt-8 pt-8 border-t border-slate-50">
-                                        <div class="flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-slate-400">
+                                    <div class="mt-6 sm:mt-8 pt-6 sm:pt-8 border-t border-slate-100/60">
+                                        <div class="flex justify-between items-center text-[9px] sm:text-[10px] font-black uppercase tracking-widest text-slate-400">
                                             <span>Cobertura</span>
                                             <span class="text-emerald-600">Completa</span>
                                         </div>
-                                        <div class="mt-3 h-2 bg-slate-100 rounded-full overflow-hidden">
-                                            <div class="h-full bg-emerald-500 rounded-full" style="width: 100%"></div>
+                                        <div class="mt-3 h-2 sm:h-2.5 bg-slate-100 rounded-full overflow-hidden shadow-inner">
+                                            <div class="h-full bg-gradient-to-r from-emerald-400 to-emerald-500 rounded-full" style="width: 100%"></div>
                                         </div>
                                     </div>
                                 </div>
                             </div>
 
                             <!-- Card 2: Top Performance -->
-                            <div class="bg-white p-10 rounded-[3.5rem] border border-slate-100 shadow-sm hover:shadow-2xl transition-all group overflow-hidden relative">
-                                <div class="absolute -right-10 -top-10 w-32 h-32 bg-indigo-50 rounded-full group-hover:scale-150 transition-transform duration-700 opacity-50"></div>
+                            <div class="bg-white p-6 sm:p-8 md:p-10 rounded-[2rem] sm:rounded-[2.5rem] md:rounded-[3.5rem] border border-slate-100 shadow-sm hover:shadow-2xl transition-all duration-500 group overflow-hidden relative">
+                                <div class="absolute -right-10 -top-10 w-24 sm:w-32 h-24 sm:h-32 bg-indigo-50 rounded-full group-hover:scale-150 transition-transform duration-700 opacity-50"></div>
                                 <div class="relative z-10">
-                                    <div class="w-16 h-16 bg-indigo-50 text-indigo-600 rounded-3xl flex items-center justify-center text-2xl mb-8 group-hover:scale-110 transition-transform shadow-inner ring-1 ring-indigo-100">
+                                    <div class="w-14 h-14 sm:w-16 sm:h-16 bg-gradient-to-br from-indigo-50 to-indigo-100 text-indigo-600 rounded-[1.25rem] sm:rounded-3xl flex items-center justify-center text-xl sm:text-2xl mb-6 sm:mb-8 group-hover:scale-110 transition-transform shadow-inner ring-1 ring-indigo-200">
                                         <i class="fa-solid fa-crown"></i>
                                     </div>
-                                    <h4 class="text-2xl font-black text-slate-800 mb-4">Top Performance</h4>
-                                    <p class="text-sm text-slate-500 leading-relaxed font-medium">
+                                    <h4 class="text-xl sm:text-2xl font-black text-slate-800 mb-3 sm:mb-4">Top Performance</h4>
+                                    <p class="text-xs sm:text-sm text-slate-500 leading-relaxed font-medium">
                                         Seu paciente com maior faturamento acumulado é <span class="text-indigo-600 font-black"><?= $top_paciente[0] ?></span>, representando um faturamento de <span class="bg-indigo-50 px-2 py-0.5 rounded-lg text-indigo-700 font-bold"><?= fmtBRL($top_paciente[1]) ?></span>.
                                     </p>
-                                    <div class="mt-8 pt-8 border-t border-slate-50 flex items-center gap-4">
+                                    <div class="mt-6 sm:mt-8 pt-6 sm:pt-8 border-t border-slate-100/60 flex items-center justify-between gap-4">
                                         <div class="flex-1">
-                                            <p class="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">Status de Atendimento</p>
-                                            <p class="text-xs font-bold text-slate-700 mt-1">Alta de Retenção</p>
+                                            <p class="text-[8px] sm:text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">Status</p>
+                                            <p class="text-[11px] sm:text-xs font-bold text-slate-700 mt-1">Alta de Retenção</p>
                                         </div>
-                                        <div class="w-10 h-10 rounded-full border-2 border-indigo-200 flex items-center justify-center text-[10px] font-black text-indigo-600 text-center">92%</div>
+                                        <div class="w-10 h-10 sm:w-12 sm:h-12 rounded-full border-2 border-indigo-200 flex items-center justify-center text-[10px] sm:text-xs font-black text-indigo-600 text-center shadow-sm">92%</div>
                                     </div>
                                 </div>
                             </div>
 
-                            <!-- Card 3: Retenção Fiscal -->
-                            <div class="bg-white p-10 rounded-[3.5rem] border border-slate-100 shadow-sm hover:shadow-2xl transition-all group overflow-hidden relative">
-                                <div class="absolute -right-10 -top-10 w-32 h-32 bg-amber-50 rounded-full group-hover:scale-150 transition-transform duration-700 opacity-50"></div>
+                            <!-- Card 3: Reserva Fiscal -->
+                            <div class="bg-white p-6 sm:p-8 md:p-10 rounded-[2rem] sm:rounded-[2.5rem] md:rounded-[3.5rem] border border-slate-100 shadow-sm hover:shadow-2xl transition-all duration-500 group overflow-hidden relative">
+                                <div class="absolute -right-10 -top-10 w-24 sm:w-32 h-24 sm:h-32 bg-amber-50 rounded-full group-hover:scale-150 transition-transform duration-700 opacity-50"></div>
                                 <div class="relative z-10">
-                                    <div class="w-16 h-16 bg-amber-50 text-amber-600 rounded-3xl flex items-center justify-center text-2xl mb-8 group-hover:scale-110 transition-transform shadow-inner ring-1 ring-amber-100">
+                                    <div class="w-14 h-14 sm:w-16 sm:h-16 bg-gradient-to-br from-amber-50 to-amber-100 text-amber-600 rounded-[1.25rem] sm:rounded-3xl flex items-center justify-center text-xl sm:text-2xl mb-6 sm:mb-8 group-hover:scale-110 transition-transform shadow-inner ring-1 ring-amber-200">
                                         <i class="fa-solid fa-piggy-bank"></i>
                                     </div>
-                                    <h4 class="text-2xl font-black text-slate-800 mb-4">Reserva Fiscal</h4>
-                                    <p class="text-sm text-slate-500 leading-relaxed font-medium">
-                                        Recomendamos reservar <span class="text-amber-600 font-black"><?= fmtBRL($totals_all['total_prov']) ?></span> para obrigações deste período, garantindo zero surpresas com impostos anuais.
+                                    <h4 class="text-xl sm:text-2xl font-black text-slate-800 mb-3 sm:mb-4">Reserva Fiscal</h4>
+                                    <p class="text-xs sm:text-sm text-slate-500 leading-relaxed font-medium">
+                                        Recomendamos reservar <span class="text-amber-600 font-black"><?= fmtBRL($totals_all['total_prov']) ?></span> para obrigações deste período, garantindo zero surpresas.
                                     </p>
-                                    <div class="mt-8 pt-8 border-t border-slate-50">
-                                        <div class="flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-slate-400">
+                                    <div class="mt-6 sm:mt-8 pt-6 sm:pt-8 border-t border-slate-100/60">
+                                        <div class="flex justify-between items-center text-[9px] sm:text-[10px] font-black uppercase tracking-widest text-slate-400">
                                             <span>Nível de Risco</span>
                                             <span class="text-amber-600">Controlado</span>
                                         </div>
-                                        <div class="mt-3 h-2 bg-slate-100 rounded-full overflow-hidden">
-                                            <div class="h-full bg-amber-400 rounded-full" style="width: 25%"></div>
+                                        <div class="mt-3 h-2 sm:h-2.5 bg-slate-100 rounded-full overflow-hidden shadow-inner">
+                                            <div class="h-full bg-gradient-to-r from-amber-400 to-amber-500 rounded-full" style="width: 25%"></div>
                                         </div>
                                     </div>
                                 </div>
@@ -1539,35 +1575,35 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                         </div>
 
                         <!-- Strategic AI Analysis Center -->
-                        <div class="grid grid-cols-1 lg:grid-cols-3 gap-10">
+                        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 sm:gap-8 lg:gap-10">
                             <!-- Left: Detailed Margins -->
-                            <div class="lg:col-span-2 bg-white rounded-[4rem] border border-slate-100 p-12 shadow-sm">
-                                <div class="flex justify-between items-start mb-12">
+                            <div class="lg:col-span-2 bg-white rounded-[2rem] sm:rounded-[3rem] md:rounded-[4rem] border border-slate-100 p-6 sm:p-8 md:p-12 shadow-sm hover:shadow-xl transition-shadow duration-500">
+                                <div class="flex justify-between items-start mb-8 md:mb-12">
                                     <div>
-                                        <h3 class="text-3xl font-black text-slate-900 tracking-tight">Análise Estrutural do Caixa</h3>
-                                        <p class="text-[11px] font-bold text-slate-400 uppercase tracking-[0.2em] mt-2">Eficiência Operacional Detalhada</p>
+                                        <h3 class="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">Análise Estrutural do Caixa</h3>
+                                        <p class="text-[9px] sm:text-[11px] font-bold text-slate-400 uppercase tracking-[0.2em] mt-1 sm:mt-2">Eficiência Operacional Detalhada</p>
                                     </div>
-                                    <button class="w-14 h-14 bg-slate-50 text-slate-400 rounded-2xl flex items-center justify-center hover:bg-slate-900 hover:text-white transition-all shadow-sm">
+                                    <button class="w-10 h-10 sm:w-14 sm:h-14 bg-slate-50 text-slate-400 rounded-xl sm:rounded-2xl flex items-center justify-center hover:bg-slate-900 hover:text-white transition-all shadow-sm">
                                         <i class="fa-solid fa-ellipsis"></i>
                                     </button>
                                 </div>
 
-                                <div class="space-y-10">
-                                    <div>
-                                        <div class="flex justify-between items-end mb-4">
-                                            <span class="text-[12px] font-black text-slate-800 uppercase tracking-widest">Margem de Lucro Bruta</span>
-                                            <span class="text-4xl font-black text-indigo-600 tracking-tighter"><?= number_format($profit_margin, 1) ?>%</span>
+                                <div class="space-y-8 sm:space-y-10">
+                                    <div class="bg-slate-50/50 p-6 sm:p-8 rounded-[1.5rem] sm:rounded-[2.5rem] border border-slate-50">
+                                        <div class="flex justify-between items-end mb-3 sm:mb-4">
+                                            <span class="text-[10px] sm:text-[12px] font-black text-slate-800 uppercase tracking-widest">Margem de Lucro Bruta</span>
+                                            <span class="text-3xl sm:text-4xl font-black text-indigo-600 tracking-tighter"><?= number_format($profit_margin, 1) ?>%</span>
                                         </div>
-                                        <div class="h-4 bg-slate-50 rounded-full overflow-hidden p-1 shadow-inner border border-slate-100">
-                                            <div class="h-full bg-gradient-to-r from-indigo-500 to-indigo-400 rounded-full shadow-lg" style="width: <?= max(5, min(100, $profit_margin)) ?>%"></div>
+                                        <div class="h-3 sm:h-4 bg-slate-100/50 rounded-full overflow-hidden p-0.5 sm:p-1 shadow-inner border border-slate-200">
+                                            <div class="h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-indigo-400 rounded-full shadow-lg" style="width: <?= max(5, min(100, $profit_margin)) ?>%"></div>
                                         </div>
-                                        <p class="text-xs text-slate-400 font-bold mt-4 italic">Sua margem está saudável. Consultórios de alto padrão costumam operar entre 65% e 80% de lucro líquido.</p>
+                                        <p class="text-[10px] sm:text-xs text-slate-500 font-medium mt-3 sm:mt-4 italic">Sua margem está saudável. Consultórios de alto padrão costumam operar entre 65% e 80% de lucro líquido.</p>
                                     </div>
 
-                                    <div class="grid grid-cols-2 gap-8 pt-6">
-                                        <div class="p-8 bg-slate-50 rounded-[2.5rem] border border-slate-100">
-                                            <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Ticket Médio / Sessão</p>
-                                            <p class="text-2xl font-black text-slate-900">
+                                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6 md:gap-8 pt-2 sm:pt-6">
+                                        <div class="p-6 sm:p-8 bg-gradient-to-br from-slate-50 to-white rounded-[1.5rem] sm:rounded-[2.5rem] border border-slate-100 shadow-sm hover:shadow-md transition-shadow">
+                                            <p class="text-[9px] sm:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 sm:mb-2">Ticket Médio / Sessão</p>
+                                            <p class="text-xl sm:text-2xl md:text-3xl font-black text-slate-900">
                                                 <?php 
                                                     $total_sessoes = 0;
                                                     foreach($pacientes as $p) $total_sessoes += $p['sessões'];
@@ -1575,41 +1611,45 @@ if ($view_mode !== 'archive' && $view_mode !== 'all' && $view_mode !== 'current'
                                                 ?>
                                             </p>
                                         </div>
-                                        <div class="p-8 bg-slate-50 rounded-[2.5rem] border border-slate-100">
-                                            <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Custo Fixo Mensal</p>
-                                            <p class="text-2xl font-black text-slate-900"><?= fmtBRL($totals_all['expense']) ?></p>
+                                        <div class="p-6 sm:p-8 bg-gradient-to-br from-slate-50 to-white rounded-[1.5rem] sm:rounded-[2.5rem] border border-slate-100 shadow-sm hover:shadow-md transition-shadow">
+                                            <p class="text-[9px] sm:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 sm:mb-2">Custo Fixo Mensal</p>
+                                            <p class="text-xl sm:text-2xl md:text-3xl font-black text-slate-900"><?= fmtBRL($totals_all['expense']) ?></p>
                                         </div>
                                     </div>
                                 </div>
                             </div>
 
                             <!-- Right: AI Brain Suggestions -->
-                            <div class="flex flex-col gap-8">
-                                <div class="bg-indigo-600 rounded-[4rem] p-10 text-white shadow-xl shadow-indigo-100 relative overflow-hidden group">
+                            <div class="flex flex-col gap-6 sm:gap-8">
+                                <div class="bg-gradient-to-br from-indigo-600 to-purple-700 rounded-[2rem] sm:rounded-[3rem] md:rounded-[4rem] p-6 sm:p-8 lg:p-10 text-white shadow-2xl shadow-indigo-600/30 relative overflow-hidden group">
                                     <div class="absolute -top-10 -right-10 w-40 h-40 bg-white/10 rounded-full blur-3xl group-hover:scale-150 transition-all duration-1000"></div>
-                                    <h5 class="text-sm font-black text-white/40 mb-8 uppercase tracking-[0.2em]">IA Brain: Análise Estratégica</h5>
+                                    <div class="absolute -bottom-10 -left-10 w-32 h-32 bg-purple-500/20 rounded-full blur-2xl group-hover:scale-150 transition-all duration-1000 delay-100"></div>
                                     
-                                    <div class="space-y-6 relative z-10">
-                                        <div class="text-[13px] font-bold text-indigo-50 leading-relaxed whitespace-pre-wrap">
+                                    <h5 class="flex items-center gap-2 text-[10px] sm:text-sm font-black text-indigo-100 mb-6 sm:mb-8 uppercase tracking-[0.2em]">
+                                        <i class="fa-solid fa-brain opacity-70"></i> IA Brain: Estratégia
+                                    </h5>
+                                    
+                                    <div class="space-y-4 sm:space-y-6 relative z-10">
+                                        <div class="text-xs sm:text-[13px] font-medium text-indigo-50 leading-relaxed whitespace-pre-wrap">
                                             <?= $ai_analysis ?>
                                         </div>
                                     </div>
 
-                                    <div class="mt-10 pt-10 border-t border-white/10 flex items-center justify-between">
-                                        <div class="flex -space-x-3">
-                                            <div class="w-10 h-10 rounded-full bg-white/10 backdrop-blur-md border-2 border-indigo-600 flex items-center justify-center text-[10px] font-black">AI</div>
-                                            <div class="w-10 h-10 rounded-full bg-indigo-500 border-2 border-indigo-600 flex items-center justify-center text-[10px] font-black"><?= $user_initials ?></div>
+                                    <div class="mt-8 sm:mt-10 pt-6 sm:pt-10 border-t border-white/20 flex items-center justify-between">
+                                        <div class="flex -space-x-2 sm:-space-x-3">
+                                            <div class="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-white/20 backdrop-blur-md border border-indigo-400 shadow-lg flex items-center justify-center text-[8px] sm:text-[10px] font-black">AI</div>
+                                            <div class="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-gradient-to-br from-indigo-400 to-purple-500 border border-indigo-300 shadow-lg flex items-center justify-center text-[8px] sm:text-[10px] font-black"><?= $user_initials ?></div>
                                         </div>
-                                        <button onclick="openModal('aiChatModal')" class="text-[10px] font-black uppercase tracking-widest text-indigo-300 hover:text-white transition-colors">Ver Mais →</button>
+                                        <button onclick="openModal('aiChatModal')" class="text-[9px] sm:text-[10px] font-black uppercase tracking-widest text-indigo-200 hover:text-white transition-colors group-hover:translate-x-1 duration-300">Consultar Histórico →</button>
                                     </div>
                                 </div>
 
-                                <div class="bg-white rounded-[4rem] p-10 border border-slate-100 shadow-sm flex-1 flex flex-col justify-center items-center text-center">
-                                    <div class="w-20 h-20 bg-emerald-50 text-emerald-500 rounded-full flex items-center justify-center text-3xl mb-6 shadow-inner ring-1 ring-emerald-100 animate-bounce cursor-pointer" onclick="openModal('aiChatModal')">
-                                        <i class="fa-solid fa-wand-magic-sparkles"></i>
+                                <div class="bg-gradient-to-br from-white to-slate-50 rounded-[2rem] sm:rounded-[3rem] p-6 sm:p-8 lg:p-10 border border-slate-100 shadow-sm hover:shadow-lg transition-shadow duration-300 flex-1 flex flex-col justify-center items-center text-center cursor-pointer group" onclick="openModal('aiChatModal')">
+                                    <div class="w-16 h-16 sm:w-20 sm:h-20 bg-emerald-50 text-emerald-500 rounded-full flex items-center justify-center text-2xl sm:text-3xl mb-4 sm:mb-6 shadow-inner ring-1 ring-emerald-100 group-hover:bg-emerald-500 group-hover:text-white transition-all duration-300">
+                                        <i class="fa-solid fa-robot group-hover:animate-bounce"></i>
                                     </div>
-                                    <h5 class="text-xl font-black text-slate-900 mb-2">Dúvida Pontual?</h5>
-                                    <p class="text-sm text-slate-500 font-medium px-4">Nosso consultor IA está pronto para responder perguntas sobre faturamento, pacientes e metas.</p>
+                                    <h5 class="text-lg sm:text-xl font-black text-slate-900 mb-2 group-hover:text-emerald-600 transition-colors">Dúvida Pontual?</h5>
+                                    <p class="text-xs sm:text-sm text-slate-500 font-medium px-2 sm:px-4">A Assistente Top IA está pronta para responder perguntas sobre o sistema, suas metas e dar dicas geniais.</p>
                                 </div>
                             </div>
                         </div>
